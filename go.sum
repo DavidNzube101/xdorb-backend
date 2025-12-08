@@ -1,3 +1,5 @@
+github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251207232518-7cce2946171d h1:bfUjhfD7P8horMpbw/OoKQO8OCDshi2FvhyxqNCWIuU=
+github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251207232518-7cce2946171d/go.mod h1:fv1A7JKIftx5Q5jqCFhND/J0PtmP8IZEYG6biAh59Eg=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=

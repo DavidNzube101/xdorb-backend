@@ -1,6 +1,6 @@
 module xdorb-backend
 
-go 1.25
+go 1.25.4
 
 require (
 	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251207232518-7cce2946171d
@@ -48,4 +48,4 @@ require (
 	lukechampine.com/uint128 v1.2.0 // indirect
 )
 
-replace github.com/DavidNzube101/xandeum-prpc-go => ../xandeum-prpc-go
+// replace github.com/DavidNzube101/xandeum-prpc-go => ../xandeum-prpc-go
