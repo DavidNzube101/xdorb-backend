@@ -1,0 +1,97 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/sirupsen/logrus"
+)
+
+type Config struct {
+	Environment  string
+	Port         string
+	ValidAPIKeys []string
+
+	// Redis
+	RedisURL      string
+	RedisPassword string
+	RedisDB       int
+
+	// pRPC
+	PRPCEndpoint string
+	PRPCSeedIPs  []string
+
+	// Cache TTLs
+	PNodeCacheTTL   time.Duration
+	StatsCacheTTL   time.Duration
+	HistoryCacheTTL time.Duration
+
+	// Rate limiting
+	RateLimitRPM int
+}
+
+func Load() *Config {
+	validAPIKeysStr := getEnv("VALID_API_KEYS", "your-secret-api-key")
+	validAPIKeys := strings.Split(validAPIKeysStr, ",")
+	// Trim spaces from each key
+	for i, key := range validAPIKeys {
+		validAPIKeys[i] = strings.TrimSpace(key)
+	}
+
+	cfg := &Config{
+		Environment:  getEnv("ENVIRONMENT", "development"),
+		Port:         getEnv("PORT", "8080"),
+		ValidAPIKeys: validAPIKeys,
+
+		RedisURL:      getEnv("REDIS_URL", "redis-15901.c53.west-us.azure.cloud.redislabs.com:15901"),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisDB:       getEnvAsInt("REDIS_DB", 0),
+
+		PRPCEndpoint: getEnv("PRPC_ENDPOINT", "https://xandeum.network"),
+		PRPCSeedIPs:  []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"},
+
+		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 30*time.Second),
+		StatsCacheTTL:   getEnvAsDuration("STATS_CACHE_TTL", 5*time.Minute),
+		HistoryCacheTTL: getEnvAsDuration("HISTORY_CACHE_TTL", time.Hour),
+
+		RateLimitRPM: getEnvAsInt("RATE_LIMIT_RPM", 100),
+	}
+
+	// Validate required config
+	if len(validAPIKeys) == 0 || (len(validAPIKeys) == 1 && validAPIKeys[0] == "") {
+		logrus.Fatal("VALID_API_KEYS environment variable is required")
+	}
+
+	if cfg.RedisPassword == "" {
+		logrus.Warn("REDIS_PASSWORD not set - Redis connection may fail")
+	}
+
+	return cfg
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvAsInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if duration, err := time.ParseDuration(value); err == nil {
+			return duration
+		}
+	}
+	return defaultValue
+}
