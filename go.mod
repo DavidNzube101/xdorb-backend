@@ -3,7 +3,7 @@ module xdorb-backend
 go 1.25.0
 
 require (
-	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251207232518-7cce2946171d
+	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251208135309-87190e16796e
 	github.com/gin-gonic/gin v1.11.0
 	github.com/ip2location/ip2location-go/v9 v9.8.0
 	github.com/joho/godotenv v1.5.1
