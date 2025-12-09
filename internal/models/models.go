@@ -13,6 +13,8 @@ type PNode struct {
 	Rewards         float64   `json:"rewards"`
 	Location        string    `json:"location"`
 	Region          string    `json:"region"`
+	Lat             float64   `json:"lat"`
+	Lng             float64   `json:"lng"`
 	StorageUsed     int64     `json:"storageUsed"`     // bytes
 	StorageCapacity int64     `json:"storageCapacity"` // bytes
 	LastSeen        time.Time `json:"lastSeen"`

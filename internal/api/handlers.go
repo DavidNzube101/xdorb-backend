@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -359,33 +360,47 @@ func (h *Handler) GetNetworkHeatmap(c *gin.Context) {
 	pnodes, err := h.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000}) // Get all pNodes
 	if err != nil {
 		logrus.Error("Failed to get pNodes for heatmap:", err)
-		// Fallback to mock
-		heatmap := h.getMockHeatmap()
-		c.JSON(http.StatusOK, models.APIResponse{Data: heatmap})
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch pNodes for heatmap",
+		})
 		return
 	}
 
-	// Group pNodes by region
-	regionGroups := make(map[string][]models.PNode)
+	// Create heatmap points using real pNode coordinates
+	var heatmap []models.HeatmapPoint
+
+	// Group pNodes by approximate location (lat/lng rounded to 1 decimal for clustering)
+	locationGroups := make(map[string][]models.PNode)
+
 	for _, pnode := range pnodes {
-		region := pnode.Region
-		if region == "" || region == "Unknown" {
-			region = "Unknown"
+		// Use real coordinates if available, otherwise fallback to region
+		lat, lng := pnode.Lat, pnode.Lng
+		if lat == 0 && lng == 0 {
+			// Fallback to region coordinates
+			region := pnode.Region
+			if region == "" || region == "Unknown" {
+				region = "Unknown"
+			}
+			lat, lng = h.getRegionCoordinates(region)
 		}
-		regionGroups[region] = append(regionGroups[region], pnode)
+
+		if lat == 0 && lng == 0 {
+			continue // Skip if no coordinates
+		}
+
+		// Round to 1 decimal place for clustering nearby nodes
+		key := fmt.Sprintf("%.1f,%.1f", lat, lng)
+		locationGroups[key] = append(locationGroups[key], pnode)
 	}
 
-	var heatmap []models.HeatmapPoint
-	for region, nodes := range regionGroups {
+	for key, nodes := range locationGroups {
 		if len(nodes) == 0 {
 			continue
 		}
 
-		// Use region-based coordinates (since we don't have individual lat/lng)
-		lat, lng := h.getRegionCoordinates(region)
-		if lat == 0 && lng == 0 {
-			continue // Skip unknown regions
-		}
+		// Parse coordinates back
+		var lat, lng float64
+		fmt.Sscanf(key, "%f,%f", &lat, &lng)
 
 		// Calculate averages
 		totalUptime := 0.0
@@ -395,11 +410,30 @@ func (h *Handler) GetNetworkHeatmap(c *gin.Context) {
 		avgUptime := totalUptime / float64(len(nodes))
 
 		// Calculate intensity based on node count and uptime
-		intensity := (float64(len(nodes)) / 10.0) * (avgUptime / 100.0) * 100
+		intensity := (float64(len(nodes)) / 3.0) * (avgUptime / 100.0) * 100
 		if intensity > 100 {
 			intensity = 100
-		} else if intensity < 10 {
-			intensity = 10
+		} else if intensity < 5 {
+			intensity = 5
+		}
+
+		// Use most common region in the group
+		regionCounts := make(map[string]int)
+		for _, node := range nodes {
+			region := node.Region
+			if region == "" || region == "Unknown" {
+				region = "Unknown"
+			}
+			regionCounts[region]++
+		}
+
+		maxRegion := "Unknown"
+		maxCount := 0
+		for region, count := range regionCounts {
+			if count > maxCount {
+				maxCount = count
+				maxRegion = region
+			}
 		}
 
 		heatmap = append(heatmap, models.HeatmapPoint{
@@ -407,14 +441,14 @@ func (h *Handler) GetNetworkHeatmap(c *gin.Context) {
 			Lng:       lng,
 			Intensity: intensity,
 			NodeCount: len(nodes),
-			Region:    region,
+			Region:    maxRegion,
 			AvgUptime: avgUptime,
 		})
 	}
 
-	// If no real data, fallback to mock
+	// If no data, return empty array
 	if len(heatmap) == 0 {
-		heatmap = h.getMockHeatmap()
+		heatmap = []models.HeatmapPoint{}
 	}
 
 	// Cache the result

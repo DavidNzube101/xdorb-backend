@@ -197,12 +197,16 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 			loc, err := geolocation.GetLocation(ip)
 			locationStr := "Unknown"
 			region := "Unknown"
+			lat := 0.0
+			lng := 0.0
 			if err == nil && loc != nil {
 				locationStr = loc.GetLocationString()
 				region = loc.Region
 				if region == "" {
 					region = loc.Country
 				}
+				lat = loc.Latitude
+				lng = loc.Longitude
 			}
 
 			// Determine status based on last updated
@@ -230,6 +234,8 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 				Rewards:         float64(rand.Intn(100)) + rand.Float64(), // Generated
 				Location:        locationStr,
 				Region:          region,
+				Lat:             lat,
+				Lng:             lng,
 				StorageUsed:     int64(stats.TotalBytes),
 				StorageCapacity: int64(stats.FileSize),
 				LastSeen:        lastSeen,
@@ -315,12 +321,16 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 		loc, err := geolocation.GetLocation(ip)
 		locationStr := "Unknown"
 		region := "Unknown"
+		lat := 0.0
+		lng := 0.0
 		if err == nil && loc != nil {
 			locationStr = loc.GetLocationString()
 			region = loc.Region
 			if region == "" {
 				region = loc.Country
 			}
+			lat = loc.Latitude
+			lng = loc.Longitude
 		}
 
 		// Determine status
@@ -347,6 +357,8 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 			Rewards:         float64(rand.Intn(100)) + rand.Float64(),
 			Location:        locationStr,
 			Region:          region,
+			Lat:             lat,
+			Lng:             lng,
 			StorageUsed:     int64(stats.TotalBytes),
 			StorageCapacity: int64(stats.FileSize),
 			LastSeen:        lastSeen,
@@ -371,6 +383,8 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 		Rewards:         0,
 		Location:        "Unknown",
 		Region:          "Unknown",
+		Lat:             0,
+		Lng:             0,
 		StorageUsed:     0,
 		StorageCapacity: 0,
 		LastSeen:        time.Now(),
