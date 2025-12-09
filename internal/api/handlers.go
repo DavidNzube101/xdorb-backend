@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"xdorb-backend/internal/cache"
@@ -462,6 +463,7 @@ func (h *Handler) GetNetworkHeatmap(c *gin.Context) {
 // getRegionCoordinates returns approximate coordinates for a region
 func (h *Handler) getRegionCoordinates(region string) (float64, float64) {
 	coordinates := map[string][2]float64{
+		// Major continents
 		"North America": {40.7128, -74.0060},  // New York
 		"Europe":        {51.5074, -0.1278},   // London
 		"Asia":          {35.6762, 139.6503},  // Tokyo
@@ -469,12 +471,52 @@ func (h *Handler) getRegionCoordinates(region string) (float64, float64) {
 		"Africa":        {-26.2041, 28.0473},  // Johannesburg
 		"Australia":     {-33.8688, 151.2093}, // Sydney
 		"Oceania":       {-33.8688, 151.2093}, // Sydney
+
+		// European countries/regions
+		"France":      {46.6034, 1.8883},  // France center
+		"Grand-Est":   {48.5734, 7.7521},  // Strasbourg, Grand-Est
+		"Germany":     {51.1657, 10.4515}, // Germany center
+		"UK":          {54.7024, -3.2765}, // UK center
+		"Italy":       {41.8719, 12.5674}, // Rome
+		"Spain":       {40.4637, -3.7492}, // Madrid
+		"Netherlands": {52.1326, 5.2913},  // Netherlands center
+
+		// Eastern Europe
+		"Romania":        {45.9432, 24.9668}, // Romania center
+		"Neamt":          {47.0000, 26.3667}, // Neamt, Romania
+		"Poland":         {51.9194, 19.1451}, // Poland center
+		"Czech Republic": {49.8175, 15.4730}, // Czech Republic center
+		"Hungary":        {47.1625, 19.5033}, // Hungary center
+
+		// Asian countries
+		"Japan": {36.2048, 138.2529}, // Japan center
+		"China": {35.8617, 104.1954}, // China center
+		"India": {20.5937, 78.9629},  // India center
+		"Korea": {35.9078, 127.7669}, // Korea center
+
+		// American regions
+		"California": {36.7783, -119.4179}, // California center
+		"Texas":      {31.9686, -99.9018},  // Texas center
+		"Florida":    {27.6648, -81.5158},  // Florida center
+		"New York":   {40.7128, -74.0060},  // New York
+
+		// Default for unknown
+		"Unknown": {20.0, 0.0}, // Equator, Prime Meridian
 	}
 
 	if coord, exists := coordinates[region]; exists {
 		return coord[0], coord[1]
 	}
-	return 0, 0 // Unknown
+
+	// Try to match partial region names
+	for name, coord := range coordinates {
+		if strings.Contains(strings.ToLower(region), strings.ToLower(name)) ||
+			strings.Contains(strings.ToLower(name), strings.ToLower(region)) {
+			return coord[0], coord[1]
+		}
+	}
+
+	return 20.0, 0.0 // Default to equator if not found
 }
 
 // getMockHeatmap returns fallback mock data
