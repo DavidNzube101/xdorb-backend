@@ -310,12 +310,11 @@ func (h *Handler) GetPNodeAlerts(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: alerts})
 }
 
-// GetLeaderboard returns top performing pNodes
+// GetLeaderboard returns top performing pNodes ranked by XDN Score
 func (h *Handler) GetLeaderboard(c *gin.Context) {
-	metric := c.DefaultQuery("metric", "rewards")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 
-	cacheKey := "leaderboard:" + metric + ":" + strconv.Itoa(limit)
+	cacheKey := "leaderboard:xdn:" + strconv.Itoa(limit)
 
 	// Try cache first
 	if cached, err := h.cache.Get(cacheKey); err == nil {
@@ -326,14 +325,57 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 		}
 	}
 
-	// Fetch from pRPC
-	leaderboard, err := h.prpc.GetLeaderboard(metric, limit)
+	// Fetch all nodes to calculate XDN scores
+	allNodes, err := h.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000}) // Get enough nodes to rank
 	if err != nil {
-		logrus.Error("Failed to get leaderboard:", err)
+		logrus.Error("Failed to get nodes for leaderboard:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
-			Error: "Failed to fetch leaderboard",
+			Error: "Failed to fetch leaderboard data",
 		})
 		return
+	}
+
+	// Calculate XDN scores and sort
+	// XDN Score = (stake * 0.4) + (uptime * 0.3) + ((100 - latency) * 0.2) + ((100 - riskScore) * 0.1)
+	for i := range allNodes {
+		stake := allNodes[i].Stake
+		uptime := allNodes[i].Uptime
+		latency := allNodes[i].Latency
+		riskScore := allNodes[i].RiskScore
+
+		latencyScore := 100.0 - float64(latency)
+		if latencyScore < 0 {
+			latencyScore = 0
+		}
+
+		riskScoreNormalized := 100.0 - riskScore
+		if riskScoreNormalized < 0 {
+			riskScoreNormalized = 0
+		}
+
+		allNodes[i].XDNScore = (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
+	}
+
+	// Sort by XDN Score (descending), then by stake (descending) as secondary sort
+	for i := 0; i < len(allNodes)-1; i++ {
+		for j := i + 1; j < len(allNodes); j++ {
+			swap := false
+			if allNodes[i].XDNScore < allNodes[j].XDNScore {
+				swap = true
+			} else if allNodes[i].XDNScore == allNodes[j].XDNScore && allNodes[i].Stake < allNodes[j].Stake {
+				swap = true
+			}
+
+			if swap {
+				allNodes[i], allNodes[j] = allNodes[j], allNodes[i]
+			}
+		}
+	}
+
+	// Take top N nodes
+	leaderboard := allNodes
+	if len(leaderboard) > limit {
+		leaderboard = leaderboard[:limit]
 	}
 
 	// Cache the result

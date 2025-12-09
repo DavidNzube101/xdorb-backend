@@ -41,6 +41,22 @@ func NewClient(cfg *config.Config) *Client {
 	return &Client{cfg: cfg}
 }
 
+// calculateXDNScore computes the Xandeum Node Score
+// Formula: (stake * 0.4) + (uptime * 0.3) + ((100 - latency) * 0.2) + ((100 - riskScore) * 0.1)
+func calculateXDNScore(stake float64, uptime float64, latency int, riskScore float64) float64 {
+	latencyScore := 100.0 - float64(latency)
+	if latencyScore < 0 {
+		latencyScore = 0
+	}
+
+	riskScoreNormalized := 100.0 - riskScore
+	if riskScoreNormalized < 0 {
+		riskScoreNormalized = 0
+	}
+
+	return (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
+}
+
 // HealthCheck performs a health check on the pRPC connection
 func (c *Client) HealthCheck() error {
 	// Mock health check - in real implementation, ping pRPC endpoint
@@ -224,6 +240,9 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 				uptime = 100
 			}
 
+			stake := float64(rand.Intn(10000) + 1000) // Generated
+			riskScore := 0.0                          // Will be set by AI in frontend
+
 			pnode := &models.PNode{
 				ID:              p.Pubkey, // Use pubkey as ID
 				Name:            fmt.Sprintf("Node %s", ip),
@@ -239,9 +258,10 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 				StorageUsed:     int64(stats.TotalBytes),
 				StorageCapacity: int64(stats.FileSize),
 				LastSeen:        lastSeen,
-				Performance:     uptime,                           // Use uptime as performance
-				Stake:           float64(rand.Intn(10000) + 1000), // Generated
-				RiskScore:       0,                                // Will be set by AI in frontend
+				Performance:     uptime, // Use uptime as performance
+				Stake:           stake,
+				RiskScore:       riskScore,
+				XDNScore:        calculateXDNScore(stake, uptime, latency, riskScore),
 			}
 
 			results <- pnodeResult{pnode, nil}
@@ -347,6 +367,9 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 			uptime = 100
 		}
 
+		stake := float64(rand.Intn(10000) + 1000)
+		riskScore := 0.0
+
 		pnode := &models.PNode{
 			ID:              targetPod.Pubkey,
 			Name:            fmt.Sprintf("Node %s", ip),
@@ -363,8 +386,9 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 			StorageCapacity: int64(stats.FileSize),
 			LastSeen:        lastSeen,
 			Performance:     uptime,
-			Stake:           float64(rand.Intn(10000) + 1000),
-			RiskScore:       0,
+			Stake:           stake,
+			RiskScore:       riskScore,
+			XDNScore:        calculateXDNScore(stake, uptime, latency, riskScore),
 		}
 
 		logrus.Debugf("Fetched real pNode %s from pRPC", id)
@@ -373,12 +397,17 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 
 	// If not found, return mock data as fallback
 	logrus.Warnf("pNode %s not found in gossip, returning mock data", id)
+	stake := 0.0
+	riskScore := 0.0
+	uptime := 0.0
+	latency := 0
+
 	pnode := &models.PNode{
 		ID:              id,
 		Name:            fmt.Sprintf("Node %s", id),
 		Status:          "unknown",
-		Uptime:          0,
-		Latency:         0,
+		Uptime:          uptime,
+		Latency:         latency,
 		Validations:     0,
 		Rewards:         0,
 		Location:        "Unknown",
@@ -389,8 +418,9 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 		StorageCapacity: 0,
 		LastSeen:        time.Now(),
 		Performance:     0,
-		Stake:           0,
-		RiskScore:       0,
+		Stake:           stake,
+		RiskScore:       riskScore,
+		XDNScore:        calculateXDNScore(stake, uptime, latency, riskScore),
 	}
 
 	return pnode, nil

@@ -21,6 +21,7 @@ type PNode struct {
 	Performance     float64   `json:"performance"`
 	Stake           float64   `json:"stake"`
 	RiskScore       float64   `json:"riskScore"`
+	XDNScore        float64   `json:"xdnScore"` // Xandeum Node Score
 }
 
 // DashboardStats represents dashboard overview statistics
