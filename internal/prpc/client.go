@@ -204,13 +204,6 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 					region = loc.Country
 				}
 			}
-			if locationStr == "Unknown" || locationStr == "" {
-				// Fallback to random location
-				regions := []string{"North America", "Europe", "Asia", "South America", "Africa", "Australia"}
-				cities := []string{"New York", "London", "Tokyo", "São Paulo", "Cape Town", "Sydney"}
-				region = regions[rand.Intn(len(regions))]
-				locationStr = cities[rand.Intn(len(cities))] + ", " + region
-			}
 
 			// Determine status based on last updated
 			status := "active"
@@ -322,7 +315,7 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 		loc, err := geolocation.GetLocation(ip)
 		locationStr := "Unknown"
 		region := "Unknown"
-		if err == nil {
+		if err == nil && loc != nil {
 			locationStr = loc.GetLocationString()
 			region = loc.Region
 			if region == "" {
