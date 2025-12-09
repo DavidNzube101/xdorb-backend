@@ -29,6 +29,7 @@ type DashboardStats struct {
 	TotalRewards   float64 `json:"totalRewards"`
 	AverageLatency float64 `json:"averageLatency"`
 	ValidationRate float64 `json:"validationRate"`
+	FetchTime      float64 `json:"fetchTime"` // seconds
 	Timestamp      int64   `json:"timestamp"`
 }
 

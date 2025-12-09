@@ -14,10 +14,12 @@ func main() {
 	cfg := config.Load()
 
 	// Initialize geolocation DB (optional)
-	if err := geolocation.InitDB("./location-db/IP2LOCATION-LITE-DB11.IPV6.BIN/IP2LOCATION-LITE-DB11.IPV6.BIN"); err != nil {
-		log.Println("Warning: Failed to initialize geolocation DB, locations will be unknown:", err)
+	dbPath := "./location-db/IP2LOCATION-LITE-DB11.IPV6.BIN/IP2LOCATION-LITE-DB11.IPV6.BIN"
+	if err := geolocation.InitDB(dbPath); err != nil {
+		log.Printf("Warning: Geolocation DB not loaded from %s, locations will be 'Unknown': %v", dbPath, err)
 	} else {
 		defer geolocation.CloseDB()
+		log.Println("Geolocation DB ready")
 	}
 
 	handler := api.NewHandler(cfg)

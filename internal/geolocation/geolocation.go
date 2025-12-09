@@ -15,10 +15,10 @@ func InitDB(dbPath string) error {
 	var err error
 	db, err = ip2location.OpenDB(dbPath)
 	if err != nil {
-		log.Printf("Warning: Failed to load IP2Location DB from %s: %v", dbPath, err)
+		log.Printf("Error: Failed to load IP2Location DB from %s: %v", dbPath, err)
 		return err
 	}
-	log.Println("IP2Location DB loaded successfully")
+	log.Printf("IP2Location DB loaded successfully from %s", dbPath)
 	return nil
 }
 
