@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"xdorb-backend/internal/api"
+	"xdorb-backend/internal/bot"
 	"xdorb-backend/internal/config"
 	"xdorb-backend/internal/geolocation"
 	"xdorb-backend/pkg/middleware"
@@ -57,6 +58,23 @@ func main() {
 
 	// Setup routes
 	api.SetupRoutes(r, apiHandler)
+
+	// Initialize and start Telegram bot if token is configured
+	if cfg.TelegramBotToken != "" {
+		tgBot, err := bot.NewBot(cfg)
+		if err != nil {
+			log.Printf("Failed to initialize Telegram bot: %v", err)
+		} else {
+			log.Println("Starting Telegram bot...")
+			go func() {
+				if err := tgBot.Start(); err != nil {
+					log.Printf("Telegram bot stopped with error: %v", err)
+				}
+			}()
+		}
+	} else {
+		log.Println("Telegram bot token not configured, bot disabled")
+	}
 
 	// Start server
 	port := os.Getenv("PORT")

@@ -23,6 +23,10 @@ type Config struct {
 	PRPCEndpoint string
 	PRPCSeedIPs  []string
 
+	// Telegram Bot
+	TelegramBotToken string
+	GeminiAPIKey     string
+
 	// Cache TTLs
 	PNodeCacheTTL   time.Duration
 	StatsCacheTTL   time.Duration
@@ -56,8 +60,10 @@ func Load() *Config {
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 
-		PRPCEndpoint: getEnv("PRPC_ENDPOINT", "https://xandeum.network"),
-		PRPCSeedIPs:  []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"},
+		PRPCEndpoint:     getEnv("PRPC_ENDPOINT", "https://xandeum.network"),
+		PRPCSeedIPs:      []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"},
+		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+		GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
 
 		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 30*time.Second),
 		StatsCacheTTL:   getEnvAsDuration("STATS_CACHE_TTL", 5*time.Minute),
@@ -73,6 +79,14 @@ func Load() *Config {
 
 	if cfg.RedisPassword == "" {
 		logrus.Warn("REDIS_PASSWORD not set - Redis connection may fail")
+	}
+
+	if cfg.TelegramBotToken == "" {
+		logrus.Info("TELEGRAM_BOT_TOKEN not set - Telegram bot will be disabled")
+	}
+
+	if cfg.GeminiAPIKey == "" {
+		logrus.Info("GEMINI_API_KEY not set - AI features will be limited")
 	}
 
 	return cfg
