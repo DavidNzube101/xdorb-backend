@@ -33,7 +33,14 @@ type Config struct {
 }
 
 func Load() *Config {
-	validAPIKeysStr := getEnv("VALID_API_KEYS", "your-secret-api-key")
+	// Prioritize the multi-key variable, but fall back to the single key for convenience
+	validAPIKeysStr := getEnv("VALID_API_KEYS", "")
+	if validAPIKeysStr == "" {
+		// If multi-key is not set, try the single-key variable from the frontend .env
+		singleKey := getEnv("API_KEY", "your-secret-api-key")
+		validAPIKeysStr = singleKey
+	}
+
 	validAPIKeys := strings.Split(validAPIKeysStr, ",")
 	// Trim spaces from each key
 	for i, key := range validAPIKeys {
@@ -45,7 +52,7 @@ func Load() *Config {
 		Port:         getEnv("PORT", "8080"),
 		ValidAPIKeys: validAPIKeys,
 
-		RedisURL:      getEnv("REDIS_URL", "redis-15901.c53.west-us.azure.cloud.redislabs.com:15901"),
+		RedisURL:      getEnv("REDIS_URL", "localhost:6379"),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 
