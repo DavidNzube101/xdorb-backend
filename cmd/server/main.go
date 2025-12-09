@@ -5,6 +5,7 @@ import (
 	"os"
 	"xdorb-backend/internal/api"
 	"xdorb-backend/internal/config"
+	"xdorb-backend/internal/geolocation"
 	"xdorb-backend/pkg/middleware"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,26 @@ func main() {
 
 	// Initialize configuration
 	cfg := config.Load()
+
+	// Initialize geolocation (try local DB first, fallback to online API)
+	dbPath := "./location-db/IP2LOCATION-LITE-DB11.IPV6.BIN"
+	log.Printf("Initializing geolocation service (trying local DB: %s)", dbPath)
+	if err := geolocation.InitDB(dbPath); err != nil {
+		log.Printf("Warning: Geolocation service failed to initialize, locations will be 'Unknown': %v", err)
+	} else {
+		log.Println("Geolocation service initialized successfully")
+
+		// Test with a known IP
+		testIP := "8.8.8.8" // Google DNS
+		log.Printf("Testing geolocation service with IP: %s", testIP)
+		if loc, err := geolocation.GetLocation(testIP); err != nil {
+			log.Printf("Warning: Geolocation test failed for %s: %v", testIP, err)
+		} else if loc != nil {
+			log.Printf("Geolocation test successful: %s -> %s", testIP, loc.GetLocationString())
+		} else {
+			log.Printf("Warning: Geolocation test returned nil for %s", testIP)
+		}
+	}
 
 	// Set Gin mode
 	if cfg.Environment == "production" {
