@@ -72,6 +72,25 @@ type HeatmapPoint struct {
 	AvgUptime float64 `json:"avgUptime"`
 }
 
+// AnalyticsData represents the data for the analytics page
+type AnalyticsData struct {
+	Performance []MonthlyPerformance `json:"performance"`
+	Storage     StorageStats         `json:"storage"`
+}
+
+type MonthlyPerformance struct {
+	Month      string  `json:"month"`
+	Validation int     `json:"validation"`
+	Rewards    float64 `json:"rewards"`
+	Latency    int     `json:"latency"`
+}
+
+type StorageStats struct {
+	TotalCapacity int64   `json:"totalCapacity"`
+	UsedCapacity  int64   `json:"usedCapacity"`
+	GrowthRate    float64 `json:"growthRate"`
+}
+
 // APIResponse represents a standard API response
 type APIResponse struct {
 	Data    interface{} `json:"data,omitempty"`

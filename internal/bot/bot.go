@@ -543,7 +543,7 @@ func (b *Bot) handleAISummaryForPNode(pnodeID string) string {
 	}
 
 	// Get pNode history for trend analysis
-	history, err := b.prpc.GetPNodeHistory(pnodeID, "24h")
+	history, err := b.prpc.GetPNodeHistory(pnodeID, "24h", false)
 	if err != nil {
 		logrus.Warnf("Failed to get history for pNode %s: %v", pnodeID, err)
 		history = []models.PNodeHistory{} // Empty history is ok

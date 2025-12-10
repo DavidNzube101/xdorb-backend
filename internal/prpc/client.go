@@ -234,34 +234,31 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 				status = "warning"
 			}
 
-			// Calculate uptime (assuming uptime is in seconds)
-			uptime := float64(stats.Uptime) / (24 * 3600) * 100 // as percentage
-			if uptime > 100 {
-				uptime = 100
-			}
-
-			stake := float64(rand.Intn(10000) + 1000) // Generated
-			riskScore := 0.0                          // Will be set by AI in frontend
+			// Calculated values - Set to 0 as they are not available in current RPC
+			stake := 0.0
+			validations := 0
+			rewards := 0.0
+			riskScore := 0.0
 
 			pnode := &models.PNode{
-				ID:              p.Pubkey, // Use pubkey as ID
-				Name:            fmt.Sprintf("Node %s", ip),
+				ID:              p.Pubkey,
+				Name:            fmt.Sprintf("Node %s (%s)", ip, p.Pubkey[:4]), // Include pubkey for uniqueness
 				Status:          status,
-				Uptime:          uptime,
-				Latency:         latency,                                  // Measured latency
-				Validations:     rand.Intn(1000) + 100,                    // Generated
-				Rewards:         float64(rand.Intn(100)) + rand.Float64(), // Generated
+				Uptime:          float64(p.Uptime), // Raw seconds
+				Latency:         latency,
+				Validations:     validations,
+				Rewards:         rewards,
 				Location:        locationStr,
 				Region:          region,
 				Lat:             lat,
 				Lng:             lng,
-				StorageUsed:     int64(stats.TotalBytes),
-				StorageCapacity: int64(stats.FileSize),
+				StorageUsed:     p.StorageUsed,
+				StorageCapacity: p.StorageCommitted,
 				LastSeen:        lastSeen,
-				Performance:     uptime, // Use uptime as performance
+				Performance:     0, // Placeholder
 				Stake:           stake,
 				RiskScore:       riskScore,
-				XDNScore:        calculateXDNScore(stake, uptime, latency, riskScore),
+				XDNScore:        0, // Cannot calculate without full metrics
 			}
 
 			results <- pnodeResult{pnode, nil}
@@ -362,33 +359,31 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 			status = "warning"
 		}
 
-		uptime := float64(stats.Uptime) / (24 * 3600) * 100
-		if uptime > 100 {
-			uptime = 100
-		}
-
-		stake := float64(rand.Intn(10000) + 1000)
+		// Values not currently available via RPC
+		stake := 0.0
+		validations := 0
+		rewards := 0.0
 		riskScore := 0.0
 
 		pnode := &models.PNode{
 			ID:              targetPod.Pubkey,
-			Name:            fmt.Sprintf("Node %s", ip),
+			Name:            fmt.Sprintf("Node %s (%s)", ip, targetPod.Pubkey[:4]),
 			Status:          status,
-			Uptime:          uptime,
+			Uptime:          float64(targetPod.Uptime), // Raw seconds
 			Latency:         latency,
-			Validations:     rand.Intn(1000) + 100,
-			Rewards:         float64(rand.Intn(100)) + rand.Float64(),
+			Validations:     validations,
+			Rewards:         rewards,
 			Location:        locationStr,
 			Region:          region,
 			Lat:             lat,
 			Lng:             lng,
-			StorageUsed:     int64(stats.TotalBytes),
-			StorageCapacity: int64(stats.FileSize),
+			StorageUsed:     targetPod.StorageUsed,
+			StorageCapacity: targetPod.StorageCommitted,
 			LastSeen:        lastSeen,
-			Performance:     uptime,
+			Performance:     0,
 			Stake:           stake,
 			RiskScore:       riskScore,
-			XDNScore:        calculateXDNScore(stake, uptime, latency, riskScore),
+			XDNScore:        0,
 		}
 
 		logrus.Debugf("Fetched real pNode %s from pRPC", id)
@@ -427,7 +422,12 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 }
 
 // GetPNodeHistory fetches historical metrics for a pNode
-func (c *Client) GetPNodeHistory(id string, timeRange string) ([]models.PNodeHistory, error) {
+func (c *Client) GetPNodeHistory(id string, timeRange string, simulated bool) ([]models.PNodeHistory, error) {
+	if !simulated {
+		// Real historical data is not available from pRPC yet.
+		return []models.PNodeHistory{}, nil
+	}
+
 	// Mock data - replace with actual pRPC call
 	var history []models.PNodeHistory
 
@@ -452,7 +452,7 @@ func (c *Client) GetPNodeHistory(id string, timeRange string) ([]models.PNodeHis
 		history = append(history, point)
 	}
 
-	logrus.Debugf("Fetched %d history points for pNode %s", len(history), id)
+	logrus.Debugf("Fetched %d history points for pNode %s (Simulated)", len(history), id)
 	return history, nil
 }
 
@@ -562,4 +562,30 @@ func (c *Client) GetNetworkHeatmap() ([]models.HeatmapPoint, error) {
 
 	logrus.Debugf("Fetched %d heatmap points", len(heatmap))
 	return heatmap, nil
+}
+
+// GetAnalytics fetches network analytics (aggregated from live data)
+func (c *Client) GetAnalytics() (*models.AnalyticsData, error) {
+	// Fetch all nodes to aggregate real storage data
+	pnodes, err := c.GetPNodes(&PNodeFilters{Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+
+	var totalCapacity int64
+	var usedCapacity int64
+
+	for _, node := range pnodes {
+		totalCapacity += node.StorageCapacity
+		usedCapacity += node.StorageUsed
+	}
+
+	return &models.AnalyticsData{
+		Performance: []models.MonthlyPerformance{}, // No history available yet
+		Storage: models.StorageStats{
+			TotalCapacity: totalCapacity,
+			UsedCapacity:  usedCapacity,
+			GrowthRate:    0, // Cannot calculate without history
+		},
+	}, nil
 }

@@ -66,6 +66,9 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 		// Prices
 		v1.GET("/prices", h.GetPrices)
+
+		// Analytics
+		v1.GET("/analytics", h.GetAnalytics)
 	}
 }
 
@@ -275,8 +278,10 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 func (h *Handler) GetPNodeHistory(c *gin.Context) {
 	id := c.Param("id")
 	timeRange := c.DefaultQuery("range", "24h")
+	simulatedStr := c.DefaultQuery("simulated", "false")
+	simulated := simulatedStr == "true"
 
-	cacheKey := "pnode:history:" + id + ":" + timeRange
+	cacheKey := "pnode:history:" + id + ":" + timeRange + ":" + simulatedStr
 
 	// Try cache first
 	if cached, err := h.cache.Get(cacheKey); err == nil {
@@ -288,7 +293,7 @@ func (h *Handler) GetPNodeHistory(c *gin.Context) {
 	}
 
 	// Fetch from pRPC
-	history, err := h.prpc.GetPNodeHistory(id, timeRange)
+	history, err := h.prpc.GetPNodeHistory(id, timeRange, simulated)
 	if err != nil {
 		logrus.Error("Failed to get pNode history:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -762,4 +767,35 @@ func (h *Handler) GetPrices(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: prices})
+}
+
+// GetAnalytics returns network analytics
+func (h *Handler) GetAnalytics(c *gin.Context) {
+	cacheKey := "network:analytics"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var analytics models.AnalyticsData
+		if err := cached.Unmarshal(&analytics); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: analytics})
+			return
+		}
+	}
+
+	// Fetch from pRPC
+	analytics, err := h.prpc.GetAnalytics()
+	if err != nil {
+		logrus.Error("Failed to get analytics:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch analytics data",
+		})
+		return
+	}
+
+	// Cache the result
+	if err := h.cache.Set(cacheKey, analytics, h.config.StatsCacheTTL); err != nil {
+		logrus.Warn("Failed to cache analytics:", err)
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: analytics})
 }
