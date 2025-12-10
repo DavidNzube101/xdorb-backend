@@ -3,7 +3,7 @@ module xdorb-backend
 go 1.25.0
 
 require (
-	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251208135309-87190e16796e
+	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251210162325-6dac1e7d28f2
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/ip2location/ip2location-go/v9 v9.8.0
@@ -23,7 +23,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
-
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
