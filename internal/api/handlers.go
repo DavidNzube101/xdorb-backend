@@ -673,8 +673,8 @@ func (h *Handler) GetPrices(c *gin.Context) {
 		}
 	}
 
-	// Fetch from CoinGecko
-	url := "https://api.coingecko.com/api/v3/simple/price?ids=xandeum&vs_currencies=usdc,usdt,sol,eurc,eth,base,btc"
+	// Fetch from CoinGecko (Xandeum + Solana for conversion rates)
+	url := "https://api.coingecko.com/api/v3/simple/price?ids=xandeum,solana&vs_currencies=sol,eth,btc,usd,eur"
 	resp, err := http.Get(url)
 	if err != nil {
 		logrus.Error("Failed to fetch prices from CoinGecko:", err)
@@ -702,13 +702,58 @@ func (h *Handler) GetPrices(c *gin.Context) {
 		return
 	}
 
-	var prices models.PriceData
-	if err := json.Unmarshal(body, &prices); err != nil {
+	// Parse raw response
+	var raw map[string]map[string]float64
+	if err := json.Unmarshal(body, &raw); err != nil {
 		logrus.Error("Failed to unmarshal price data:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
 			Error: "Invalid price data format",
 		})
 		return
+	}
+
+	xandData, okXand := raw["xandeum"]
+	solData, okSol := raw["solana"]
+
+	if !okXand {
+		logrus.Error("Xandeum data missing from response")
+		c.JSON(http.StatusNotFound, models.APIResponse{
+			Error: "Xandeum price data not found",
+		})
+		return
+	}
+
+	var prices models.PriceData
+
+	// Direct values from CoinGecko
+	prices.Xand.Sol = xandData["sol"]
+	prices.Xand.Eth = xandData["eth"]
+	prices.Xand.Btc = xandData["btc"]
+
+	// Calculated values
+	// If direct USD pair exists for xand, use it. Otherwise derive from SOL or ETH.
+	// Since raw response might not have 'usd' for xandeum (as seen in curl), we use SOL price.
+	
+	// Check if we have SOL price to convert
+	if okSol && prices.Xand.Sol > 0 {
+		solUsd := solData["usd"]
+		solEur := solData["eur"]
+
+		// Calculate USDC/USDT (Approx 1:1 with USD)
+		prices.Xand.Usdc = prices.Xand.Sol * solUsd
+		prices.Xand.Usdt = prices.Xand.Sol * solUsd // Assuming USDT ~ USD
+
+		// Calculate EURC (Approx 1:1 with EUR)
+		prices.Xand.Eurc = prices.Xand.Sol * solEur
+	} else {
+		// Fallback: If Xand has direct USD (unlikely based on curl), or just leave as 0
+		if val, ok := xandData["usd"]; ok {
+			prices.Xand.Usdc = val
+			prices.Xand.Usdt = val
+		}
+		if val, ok := xandData["eur"]; ok {
+			prices.Xand.Eurc = val
+		}
 	}
 
 	// Cache the result (3 minutes)

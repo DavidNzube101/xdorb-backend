@@ -95,7 +95,6 @@ type PriceData struct {
 		Sol  float64 `json:"sol"`
 		Eurc float64 `json:"eurc"`
 		Eth  float64 `json:"eth"`
-		Base float64 `json:"base"`
 		Btc  float64 `json:"btc"`
 	} `json:"xand"`
 }
