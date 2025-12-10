@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -61,6 +63,9 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 		// Network
 		v1.GET("/network/heatmap", h.GetNetworkHeatmap)
 		v1.GET("/network/history", h.GetNetworkHistory)
+
+		// Prices
+		v1.GET("/prices", h.GetPrices)
 	}
 }
 
@@ -653,4 +658,63 @@ func (h *Handler) GetNetworkHistory(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: history})
+}
+
+// GetPrices returns current crypto prices
+func (h *Handler) GetPrices(c *gin.Context) {
+	cacheKey := "prices:xand"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var prices models.PriceData
+		if err := cached.Unmarshal(&prices); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: prices})
+			return
+		}
+	}
+
+	// Fetch from CoinGecko
+	url := "https://api.coingecko.com/api/v3/simple/price?ids=xandeum&vs_currencies=usdc,usdt,sol,eurc,eth,base,btc"
+	resp, err := http.Get(url)
+	if err != nil {
+		logrus.Error("Failed to fetch prices from CoinGecko:", err)
+		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+			Error: "Failed to fetch price data",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.Errorf("CoinGecko API returned status: %d", resp.StatusCode)
+		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+			Error: "Price data provider unavailable",
+		})
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Error("Failed to read CoinGecko response:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to process price data",
+		})
+		return
+	}
+
+	var prices models.PriceData
+	if err := json.Unmarshal(body, &prices); err != nil {
+		logrus.Error("Failed to unmarshal price data:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Invalid price data format",
+		})
+		return
+	}
+
+	// Cache the result (3 minutes)
+	if err := h.cache.Set(cacheKey, prices, 3*time.Minute); err != nil {
+		logrus.Warn("Failed to cache prices:", err)
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: prices})
 }

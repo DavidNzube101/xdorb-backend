@@ -86,3 +86,16 @@ type HealthStatus struct {
 	Services  map[string]string `json:"services"`
 	Timestamp int64             `json:"timestamp"`
 }
+
+// PriceData represents crypto prices for the marquee
+type PriceData struct {
+	Xand struct {
+		Usdc float64 `json:"usdc"`
+		Usdt float64 `json:"usdt"`
+		Sol  float64 `json:"sol"`
+		Eurc float64 `json:"eurc"`
+		Eth  float64 `json:"eth"`
+		Base float64 `json:"base"`
+		Btc  float64 `json:"btc"`
+	} `json:"xand"`
+}
