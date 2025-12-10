@@ -49,6 +49,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 		// pNodes
 		v1.GET("/pnodes", h.GetPNodes)
+		v1.POST("/pnodes/refresh", h.RefreshCache)
 		v1.GET("/pnodes/:id", h.GetPNodeByID)
 		v1.GET("/pnodes/:id/history", h.GetPNodeHistory)
 		v1.GET("/pnodes/:id/peers", h.GetPNodePeers)
@@ -181,6 +182,44 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 	} else {
 		logrus.Debug("Cached pNodes data")
 	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
+}
+
+// RefreshCache clears all cached data and fetches fresh pNodes
+func (h *Handler) RefreshCache(c *gin.Context) {
+	// Clear all cache
+	if err := h.cache.FlushAll(); err != nil {
+		logrus.Error("Failed to flush cache:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to clear cache",
+		})
+		return
+	}
+
+	logrus.Info("Cache cleared successfully")
+
+	// Fetch fresh pNodes data
+	filters := &prpc.PNodeFilters{Limit: 1000} // Get all pNodes for refresh
+	pnodes, err := h.prpc.GetPNodes(filters)
+	if err != nil {
+		logrus.Error("Failed to fetch fresh pNodes:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch fresh pNodes data",
+		})
+		return
+	}
+
+	// Cache the fresh pNodes data
+	cacheKey := "pnodes:list:" + filters.CacheKey()
+	if err := h.cache.Set(cacheKey, pnodes, h.config.PNodeCacheTTL); err != nil {
+		logrus.Warn("Failed to cache fresh pNodes:", err)
+	} else {
+		logrus.Debug("Cached fresh pNodes data")
+	}
+
+	// Note: Other endpoints (leaderboard, heatmap, etc.) will be recalculated on next request
+	// since their cache was cleared
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
 }
