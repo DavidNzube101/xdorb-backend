@@ -771,7 +771,9 @@ func (h *Handler) GetPrices(c *gin.Context) {
 
 // GetAnalytics returns network analytics
 func (h *Handler) GetAnalytics(c *gin.Context) {
-	cacheKey := "network:analytics"
+	simulatedStr := c.DefaultQuery("simulated", "false")
+	simulated := simulatedStr == "true"
+	cacheKey := "network:analytics:" + simulatedStr
 
 	// Try cache first
 	if cached, err := h.cache.Get(cacheKey); err == nil {
@@ -783,7 +785,7 @@ func (h *Handler) GetAnalytics(c *gin.Context) {
 	}
 
 	// Fetch from pRPC
-	analytics, err := h.prpc.GetAnalytics()
+	analytics, err := h.prpc.GetAnalytics(simulated)
 	if err != nil {
 		logrus.Error("Failed to get analytics:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{

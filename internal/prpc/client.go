@@ -565,7 +565,7 @@ func (c *Client) GetNetworkHeatmap() ([]models.HeatmapPoint, error) {
 }
 
 // GetAnalytics fetches network analytics (aggregated from live data)
-func (c *Client) GetAnalytics() (*models.AnalyticsData, error) {
+func (c *Client) GetAnalytics(simulated bool) (*models.AnalyticsData, error) {
 	// Fetch all nodes to aggregate real storage data
 	pnodes, err := c.GetPNodes(&PNodeFilters{Limit: 1000})
 	if err != nil {
@@ -580,8 +580,23 @@ func (c *Client) GetAnalytics() (*models.AnalyticsData, error) {
 		usedCapacity += node.StorageUsed
 	}
 
+	var performance []models.MonthlyPerformance
+	if simulated {
+		// Mock performance data
+		performance = []models.MonthlyPerformance{
+			{Month: "Jan", Validation: 4000, Rewards: 2400, Latency: 240},
+			{Month: "Feb", Validation: 3000, Rewards: 1398, Latency: 221},
+			{Month: "Mar", Validation: 2000, Rewards: 9800, Latency: 229},
+			{Month: "Apr", Validation: 2780, Rewards: 3908, Latency: 200},
+			{Month: "May", Validation: 1890, Rewards: 4800, Latency: 221},
+			{Month: "Jun", Validation: 2390, Rewards: 3800, Latency: 250},
+		}
+	} else {
+		performance = []models.MonthlyPerformance{}
+	}
+
 	return &models.AnalyticsData{
-		Performance: []models.MonthlyPerformance{}, // No history available yet
+		Performance: performance,
 		Storage: models.StorageStats{
 			TotalCapacity: totalCapacity,
 			UsedCapacity:  usedCapacity,
