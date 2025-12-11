@@ -116,7 +116,22 @@ func (h *Handler) GetQuote(c *gin.Context) {
 	queryString := c.Request.URL.RawQuery
 	targetURL := "https://api.jup.ag/swap/v1/quote?" + queryString
 
-	resp, err := http.Get(targetURL)
+	// Create request with API key header
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		logrus.Error("Failed to create request:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to create request",
+		})
+		return
+	}
+
+	// Add Jupiter API key header
+	if apiKey := h.config.JupiterAPIKey; apiKey != "" {
+		req.Header.Set("x-api-key", apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logrus.Error("Failed to fetch Jupiter quote:", err)
 		c.JSON(http.StatusServiceUnavailable, models.APIResponse{

@@ -26,6 +26,7 @@ type Config struct {
 	// Telegram Bot
 	TelegramBotToken string
 	GeminiAPIKey     string
+	JupiterAPIKey    string
 
 	// Cache TTLs
 	PNodeCacheTTL   time.Duration
@@ -64,6 +65,7 @@ func Load() *Config {
 		PRPCSeedIPs:      []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"},
 		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
 		GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
+		JupiterAPIKey:    getEnv("JUPITER_API_KEY", ""),
 
 		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 30*time.Second),
 		StatsCacheTTL:   getEnvAsDuration("STATS_CACHE_TTL", 5*time.Minute),
