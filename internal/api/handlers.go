@@ -41,6 +41,9 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 	// Health check (no auth required)
 	r.GET("/health", h.HealthCheck)
 
+	// Public API routes (no auth required)
+	r.GET("/api/jupiter/quote", h.GetQuote)
+
 	// API v1 routes with authentication
 	v1 := r.Group("/api")
 	v1.Use(middleware.APIKeyAuth(h.config.ValidAPIKeys))
@@ -69,9 +72,6 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 		// Analytics
 		v1.GET("/analytics", h.GetAnalytics)
-
-		// Jupiter Quote Proxy
-		v1.GET("/jupiter/quote", h.GetQuote)
 	}
 }
 
