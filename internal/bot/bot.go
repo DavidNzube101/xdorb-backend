@@ -1,11 +1,13 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"xdorb-backend/internal"
 	"xdorb-backend/internal/config"
 	"xdorb-backend/internal/models"
 	"xdorb-backend/internal/prpc"
@@ -16,9 +18,10 @@ import (
 
 // Bot represents the Telegram bot
 type Bot struct {
-	bot    *tgbotapi.BotAPI
-	config *config.Config
-	prpc   *prpc.Client
+	bot      *tgbotapi.BotAPI
+	config   *config.Config
+	prpc     *prpc.Client
+	firebase *internal.FirebaseService
 }
 
 // NewBot creates a new Telegram bot instance
@@ -36,6 +39,9 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 
 	logrus.Infof("Telegram bot authorized on account %s", bot.Self.UserName)
 
+	// Initialize Firebase service
+	firebase, _ := internal.NewFirebaseService(cfg) // Ignore error for now
+
 	// Set bot commands for auto-suggestions
 	commands := []tgbotapi.BotCommand{
 		{Command: "start", Description: "Welcome message and overview"},
@@ -47,6 +53,7 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 		{Command: "network", Description: "Show network overview"},
 		{Command: "search", Description: "Find pNodes by region"},
 		{Command: "ai_summary", Description: "Get AI-powered insights (network or specific pNode)"},
+		{Command: "catacombs", Description: "View historical pNodes (resting in peace)"},
 	}
 
 	setCommandsConfig := tgbotapi.NewSetMyCommands(commands...)
@@ -58,9 +65,10 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 	}
 
 	return &Bot{
-		bot:    bot,
-		config: cfg,
-		prpc:   prpc.NewClient(cfg),
+		bot:      bot,
+		config:   cfg,
+		prpc:     prpc.NewClient(cfg),
+		firebase: firebase,
 	}, nil
 }
 
@@ -110,6 +118,10 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		response = b.handleSearch(text)
 	case strings.HasPrefix(text, "/ai_summary"):
 		response = b.handleAISummary(text)
+	case strings.HasPrefix(text, "/catacombs"):
+		response = b.handleCatacombs(text)
+	case strings.HasPrefix(text, "/prune "):
+		response = b.handlePrune(text, msg.From.UserName)
 	default:
 		response = "Unknown command. Use /help to see available commands."
 	}
@@ -137,12 +149,14 @@ I provide real-time analytics for Xandeum pNodes. Here's what I can do:
 • View top performing pNodes by XDN Score
 • Get detailed information about specific pNodes
 • Check XDN Scores with formula breakdown
+• Explore historical pNodes in the catacombs
 
 *Available Commands:*
 /list_pnodes [limit] - List top pNodes (default 10)
 /pnode <id> - Get detailed pNode info
 /xdn_score <id> - Quick XDN Score view
 /leaderboard [limit] - Top pNodes leaderboard
+/catacombs [limit] - View historical pNodes
 /help - Show this help message
 
 _Data is fetched live from the Xandeum network._`
@@ -161,6 +175,10 @@ func (b *Bot) handleHelp() string {
 /network - Show network overview statistics
 /search <region> - Find pNodes in a specific region
 /ai_summary [pnode_id] - Get AI-powered insights (network or specific pNode)
+/catacombs [limit] - View historical pNodes from the catacombs (default 10, max 20)
+
+*Admin Commands:*
+/prune <password> - Prune old pNodes from database (admin only)
 
 *Examples:*
 /list_pnodes 5
@@ -168,6 +186,7 @@ func (b *Bot) handleHelp() string {
 /xdn_score def456
 /search Europe
 /network
+/catacombs 5
 /ai_summary
 /ai_summary abc123
 
@@ -886,6 +905,106 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// handleCatacombs handles the /catacombs command
+func (b *Bot) handleCatacombs(text string) string {
+	limit := 10 // default
+
+	parts := strings.Fields(text)
+	if len(parts) > 1 {
+		if parsed, err := strconv.Atoi(parts[1]); err == nil && parsed > 0 && parsed <= 20 {
+			limit = parsed
+		}
+	}
+
+	// Get historical pNodes from Firebase
+	historicalNodes, err := b.firebase.GetAllPNodes(context.Background())
+	if err != nil {
+		logrus.Errorf("Failed to get historical pNodes: %v", err)
+		return "❌ Failed to fetch historical pNode data. Please try again later."
+	}
+
+	if len(historicalNodes) == 0 {
+		return "🪦 *Catacombs are empty*\n\nNo historical pNodes found. The catacombs await their first residents..."
+	}
+
+	// Calculate XDN scores for historical nodes
+	for i := range historicalNodes {
+		stake := historicalNodes[i].Stake
+		uptime := historicalNodes[i].Uptime
+		latency := historicalNodes[i].Latency
+		riskScore := historicalNodes[i].RiskScore
+
+		latencyScore := 100.0 - float64(latency)
+		if latencyScore < 0 {
+			latencyScore = 0
+		}
+
+		riskScoreNormalized := 100.0 - riskScore
+		if riskScoreNormalized < 0 {
+			riskScoreNormalized = 0
+		}
+
+		historicalNodes[i].XDNScore = (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
+	}
+
+	// Sort by XDN Score (descending)
+	for i := 0; i < len(historicalNodes)-1; i++ {
+		for j := i + 1; j < len(historicalNodes); j++ {
+			if historicalNodes[i].XDNScore < historicalNodes[j].XDNScore {
+				historicalNodes[i], historicalNodes[j] = historicalNodes[j], historicalNodes[i]
+			}
+		}
+	}
+
+	// Take top N nodes
+	catacombNodes := historicalNodes
+	if len(catacombNodes) > limit {
+		catacombNodes = catacombNodes[:limit]
+	}
+
+	var response strings.Builder
+	response.WriteString(fmt.Sprintf("🪦 *XDOrb Catacombs* - Historical pNodes (Top %d)\n\n", len(catacombNodes)))
+
+	for _, pnode := range catacombNodes {
+		status := getStatusEmoji(pnode.Status)
+		response.WriteString(fmt.Sprintf("💀 `%s` - %.1f XDN (%s %s, %.1f%% uptime)\n",
+			pnode.ID, pnode.XDNScore, status, pnode.Status, pnode.Uptime))
+	}
+
+	response.WriteString("\n_Data from the catacombs - may they rest in peace_")
+	return response.String()
+}
+
+// handlePrune handles the /prune command (admin only)
+func (b *Bot) handlePrune(text string, username string) string {
+	// Check if user is authorized (only @skipp_dev)
+	if username != "@skipp_dev" && username != "skipp_dev" {
+		return "❌ Access denied. This command is restricted to administrators only."
+	}
+
+	parts := strings.Fields(text)
+	if len(parts) < 2 {
+		return "❌ Please provide the admin password. Usage: /prune <password>"
+	}
+
+	password := parts[1]
+
+	// Check password against env variable
+	if password != b.config.TelegramAdminPassword {
+		return "❌ Invalid password. Access denied."
+	}
+
+	// Perform the prune operation (use short duration for testing instead of 30 days)
+	pruneAge := 1 * time.Hour // For testing - prune nodes older than 1 hour
+	err := b.firebase.PruneOldNodes(context.Background(), pruneAge)
+	if err != nil {
+		logrus.Errorf("Failed to prune old nodes: %v", err)
+		return "❌ Failed to prune the catacombs. Please try again later."
+	}
+
+	return fmt.Sprintf("✅ *Catacombs pruned successfully!*\n\nRemoved pNodes older than %v from the historical database.\n\n_The catacombs have been cleaned... for now._", pruneAge)
 }
 
 func min(a, b int) int {

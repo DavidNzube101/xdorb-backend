@@ -24,9 +24,10 @@ type Config struct {
 	PRPCSeedIPs  []string
 
 	// Telegram Bot
-	TelegramBotToken string
-	GeminiAPIKey     string
-	JupiterAPIKey    string
+	TelegramBotToken      string
+	TelegramAdminPassword string
+	GeminiAPIKey          string
+	JupiterAPIKey         string
 
 	// Firebase
 	FirebaseProjectID   string
@@ -66,11 +67,12 @@ func Load() *Config {
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 
-		PRPCEndpoint:     getEnv("PRPC_ENDPOINT", "https://xandeum.network"),
-		PRPCSeedIPs:      []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"},
-		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
-		GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
-		JupiterAPIKey:    getEnv("JUPITER_API_KEY", ""),
+		PRPCEndpoint:          getEnv("PRPC_ENDPOINT", "https://xandeum.network"),
+		PRPCSeedIPs:           []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"},
+		TelegramBotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramAdminPassword: getEnv("TELEGRAM_ADMIN_PASSWORD", ""),
+		GeminiAPIKey:          getEnv("GEMINI_API_KEY", ""),
+		JupiterAPIKey:         getEnv("JUPITER_API_KEY", ""),
 
 		FirebaseProjectID:   getEnv("FIREBASE_PROJECT_ID", ""),
 		FirebasePrivateKey:  getEnv("FIREBASE_PRIVATE_KEY", ""),
