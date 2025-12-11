@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -53,6 +54,19 @@ func NewFirebaseService(cfg *config.Config) (*FirebaseService, error) {
 func (fs *FirebaseService) SavePNode(ctx context.Context, pnode *models.PNode) error {
 	if fs.client == nil {
 		return nil // Firebase not configured
+	}
+
+	// Validate pnode ID - cannot be empty or contain invalid characters for Firestore
+	if pnode.ID == "" {
+		log.Println("Skipping Firebase save: pNode ID is empty")
+		return nil
+	}
+
+	// Firestore document IDs cannot contain certain characters or be empty
+	// Also cannot have trailing slashes
+	if strings.Contains(pnode.ID, "/") || strings.TrimSpace(pnode.ID) != pnode.ID {
+		log.Printf("Skipping Firebase save: pNode ID '%s' contains invalid characters", pnode.ID)
+		return nil
 	}
 
 	docRef := fs.client.Collection("pnodes").Doc(pnode.ID)
@@ -129,6 +143,12 @@ func (fs *FirebaseService) PruneOldNodes(ctx context.Context, maxAge time.Durati
 	docs, err := query.Documents(ctx).GetAll()
 	if err != nil {
 		return err
+	}
+
+	// If no documents to delete, return early
+	if len(docs) == 0 {
+		log.Println("No old pNodes to prune")
+		return nil
 	}
 
 	batch := fs.client.Batch()

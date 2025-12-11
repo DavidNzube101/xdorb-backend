@@ -126,15 +126,24 @@ func (c *Client) GetDashboardStats() (*models.DashboardStats, error) {
 	return stats, nil
 }
 
-// measureLatency measures TCP connect latency to an IP on port 6000
+// measureLatency measures TCP connect latency to an IP on port 6000 with retry
 func measureLatency(ip string) int {
-	start := time.Now()
-	conn, err := net.DialTimeout("tcp", ip+":6000", 2*time.Second)
-	if err != nil {
-		return 0 // Unreachable, return 0
+	const maxRetries = 2
+	const timeout = 2 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		start := time.Now()
+		conn, err := net.DialTimeout("tcp", ip+":6000", timeout)
+		if err == nil {
+			conn.Close()
+			return int(time.Since(start).Milliseconds())
+		}
+		// Exponential backoff
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+		}
 	}
-	conn.Close()
-	return int(time.Since(start).Milliseconds())
+	return 0 // Unreachable after retries, return 0
 }
 
 // GetPNodes fetches pNodes with optional filters
@@ -248,8 +257,14 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 				shortPubkey = p.Pubkey
 			}
 
+			// Use pubkey as ID, fallback to IP if empty
+			pnodeID := p.Pubkey
+			if pnodeID == "" {
+				pnodeID = ip
+			}
+
 			pnode := &models.PNode{
-				ID:              p.Pubkey,
+				ID:              pnodeID,
 				Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey), // Include pubkey for uniqueness
 				Status:          status,
 				Uptime:          float64(p.Uptime), // Raw seconds
@@ -381,8 +396,14 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 			shortPubkey = targetPod.Pubkey
 		}
 
+		// Use pubkey as ID, fallback to IP if empty
+		pnodeID := targetPod.Pubkey
+		if pnodeID == "" {
+			pnodeID = ip
+		}
+
 		pnode := &models.PNode{
-			ID:              targetPod.Pubkey,
+			ID:              pnodeID,
 			Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
 			Status:          status,
 			Uptime:          float64(targetPod.Uptime), // Raw seconds
