@@ -138,12 +138,38 @@ func (h *Handler) GetDashboardStats(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: stats})
 }
 
+// Helper to get global pNode list (cached or fresh)
+func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
+	cacheKey := "pnodes:global_list"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var pnodes []models.PNode
+		if err := cached.Unmarshal(&pnodes); err == nil {
+			return pnodes, nil
+		}
+	}
+
+	// Fetch from pRPC (get all)
+	pnodes, err := h.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the global list
+	if err := h.cache.Set(cacheKey, pnodes, h.config.PNodeCacheTTL); err != nil {
+		logrus.Warn("Failed to cache global pNode list:", err)
+	}
+
+	return pnodes, nil
+}
+
 // GetPNodes returns paginated list of pNodes with optional filters
 func (h *Handler) GetPNodes(c *gin.Context) {
 	// Parse query parameters
 	status := c.Query("status")
-	location := c.Query("location")
 	region := c.Query("region")
+	search := strings.ToLower(c.Query("search"))
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 
@@ -154,28 +180,8 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 		limit = 50
 	}
 
-	filters := &prpc.PNodeFilters{
-		Status:   status,
-		Location: location,
-		Region:   region,
-		Page:     page,
-		Limit:    limit,
-	}
-
-	cacheKey := "pnodes:list:" + filters.CacheKey()
-
-	// Try cache first
-	if cached, err := h.cache.Get(cacheKey); err == nil {
-		var pnodes []models.PNode
-		if err := cached.Unmarshal(&pnodes); err == nil {
-			logrus.Debug("Serving pNodes from cache")
-			c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
-			return
-		}
-	}
-
-	// Fetch from pRPC
-	pnodes, err := h.prpc.GetPNodes(filters)
+	// Get all nodes (from cache or pRPC)
+	allNodes, err := h.getGlobalPNodes()
 	if err != nil {
 		logrus.Error("Failed to get pNodes:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -184,14 +190,42 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 		return
 	}
 
-	// Cache the result
-	if err := h.cache.Set(cacheKey, pnodes, h.config.PNodeCacheTTL); err != nil {
-		logrus.Warn("Failed to cache pNodes:", err)
-	} else {
-		logrus.Debug("Cached pNodes data")
+	// Filter in-memory
+	var filtered []models.PNode
+	for _, node := range allNodes {
+		// Status filter
+		if status != "" && status != "all" && node.Status != status {
+			continue
+		}
+		// Region filter
+		if region != "" && region != "all" && node.Region != region {
+			continue
+		}
+		// Search filter (name or location)
+		if search != "" {
+			if !strings.Contains(strings.ToLower(node.Name), search) &&
+				!strings.Contains(strings.ToLower(node.Location), search) {
+				continue
+			}
+		}
+		filtered = append(filtered, node)
 	}
 
-	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
+	// Pagination
+	total := len(filtered)
+	start := (page - 1) * limit
+	end := start + limit
+
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	paginated := filtered[start:end]
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: paginated})
 }
 
 // RefreshCache clears all cached data and fetches fresh pNodes
@@ -207,9 +241,8 @@ func (h *Handler) RefreshCache(c *gin.Context) {
 
 	logrus.Info("Cache cleared successfully")
 
-	// Fetch fresh pNodes data
-	filters := &prpc.PNodeFilters{Limit: 1000} // Get all pNodes for refresh
-	pnodes, err := h.prpc.GetPNodes(filters)
+	// Fetch fresh pNodes data and populate global cache
+	pnodes, err := h.getGlobalPNodes()
 	if err != nil {
 		logrus.Error("Failed to fetch fresh pNodes:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -217,17 +250,6 @@ func (h *Handler) RefreshCache(c *gin.Context) {
 		})
 		return
 	}
-
-	// Cache the fresh pNodes data
-	cacheKey := "pnodes:list:" + filters.CacheKey()
-	if err := h.cache.Set(cacheKey, pnodes, h.config.PNodeCacheTTL); err != nil {
-		logrus.Warn("Failed to cache fresh pNodes:", err)
-	} else {
-		logrus.Debug("Cached fresh pNodes data")
-	}
-
-	// Note: Other endpoints (leaderboard, heatmap, etc.) will be recalculated on next request
-	// since their cache was cleared
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
 }
@@ -242,9 +264,18 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 		return
 	}
 
-	cacheKey := "pnode:" + id
+	// 1. Try to find in global list first (fastest and most consistent)
+	if allNodes, err := h.getGlobalPNodes(); err == nil {
+		for _, node := range allNodes {
+			if node.ID == id {
+				c.JSON(http.StatusOK, models.APIResponse{Data: node})
+				return
+			}
+		}
+	}
 
-	// Try cache first
+	// 2. If not in global list, try specific cache key
+	cacheKey := "pnode:" + id
 	if cached, err := h.cache.Get(cacheKey); err == nil {
 		var pnode models.PNode
 		if err := cached.Unmarshal(&pnode); err == nil {
@@ -254,7 +285,7 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 		}
 	}
 
-	// Fetch from pRPC
+	// 3. Fetch from pRPC (fallback for nodes not in main list?)
 	pnode, err := h.prpc.GetPNodeByID(id)
 	if err != nil {
 		logrus.Error("Failed to get pNode:", err)
@@ -267,8 +298,6 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 	// Cache the result
 	if err := h.cache.Set(cacheKey, pnode, h.config.PNodeCacheTTL); err != nil {
 		logrus.Warn("Failed to cache pNode:", err)
-	} else {
-		logrus.Debug("Cached pNode data")
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: pnode})
@@ -374,8 +403,8 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 		}
 	}
 
-	// Fetch all nodes to calculate XDN scores
-	allNodes, err := h.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000}) // Get enough nodes to rank
+	// Fetch all nodes (from shared global cache)
+	allNodes, err := h.getGlobalPNodes()
 	if err != nil {
 		logrus.Error("Failed to get nodes for leaderboard:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -383,6 +412,11 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 		})
 		return
 	}
+
+	// Create a copy to avoid mutating the cached array
+	nodesCopy := make([]models.PNode, len(allNodes))
+	copy(nodesCopy, allNodes)
+	allNodes = nodesCopy
 
 	// Calculate XDN scores and sort
 	// XDN Score = (stake * 0.4) + (uptime * 0.3) + ((100 - latency) * 0.2) + ((100 - riskScore) * 0.1)
@@ -448,8 +482,8 @@ func (h *Handler) GetNetworkHeatmap(c *gin.Context) {
 		}
 	}
 
-	// Generate real heatmap from pNode data
-	pnodes, err := h.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000}) // Get all pNodes
+	// Generate real heatmap from pNode data (shared global cache)
+	pnodes, err := h.getGlobalPNodes()
 	if err != nil {
 		logrus.Error("Failed to get pNodes for heatmap:", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -761,8 +795,8 @@ func (h *Handler) GetPrices(c *gin.Context) {
 		}
 	}
 
-	// Cache the result (3 minutes)
-	if err := h.cache.Set(cacheKey, prices, 3*time.Minute); err != nil {
+	// Cache the result (5 minutes)
+	if err := h.cache.Set(cacheKey, prices, 5*time.Minute); err != nil {
 		logrus.Warn("Failed to cache prices:", err)
 	}
 
