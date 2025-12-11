@@ -77,60 +77,6 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 // HealthCheck returns system health status
 func (h *Handler) HealthCheck(c *gin.Context) {
-// ... (rest of the file remains unchanged until the end) ...
-
-	c.JSON(http.StatusOK, models.APIResponse{Data: analytics})
-}
-
-// GetQuote proxies requests to the Jupiter Quote API
-func (h *Handler) GetQuote(c *gin.Context) {
-	// Forward all query parameters
-	queryString := c.Request.URL.RawQuery
-	targetURL := "https://quote-api.jup.ag/v6/quote?" + queryString
-
-	resp, err := http.Get(targetURL)
-	if err != nil {
-		logrus.Error("Failed to fetch Jupiter quote:", err)
-		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
-			Error: "Failed to fetch quote from Jupiter",
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		logrus.Errorf("Jupiter API returned status: %d", resp.StatusCode)
-		// Try to read error body
-		body, _ := io.ReadAll(resp.Body)
-		logrus.Warnf("Jupiter API error body: %s", string(body))
-		
-		c.JSON(resp.StatusCode, models.APIResponse{
-			Error: "Jupiter API error",
-		})
-		return
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logrus.Error("Failed to read Jupiter response:", err)
-		c.JSON(http.StatusInternalServerError, models.APIResponse{
-			Error: "Failed to process quote data",
-		})
-		return
-	}
-
-	// Parse raw response to ensure it's valid JSON
-	var jupiterResp interface{}
-	if err := json.Unmarshal(body, &jupiterResp); err != nil {
-		logrus.Error("Failed to parse Jupiter JSON:", err)
-		c.JSON(http.StatusInternalServerError, models.APIResponse{
-			Error: "Invalid response from Jupiter",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, models.APIResponse{Data: jupiterResp})
-}
 	health := &models.HealthStatus{
 		Status:    "healthy",
 		Uptime:    "unknown", // TODO: implement uptime tracking
@@ -162,6 +108,56 @@ func (h *Handler) GetQuote(c *gin.Context) {
 	}
 
 	c.JSON(statusCode, health)
+}
+
+// GetQuote proxies requests to the Jupiter Quote API
+func (h *Handler) GetQuote(c *gin.Context) {
+	// Forward all query parameters
+	queryString := c.Request.URL.RawQuery
+	targetURL := "https://quote-api.jup.ag/v6/quote?" + queryString
+
+	resp, err := http.Get(targetURL)
+	if err != nil {
+		logrus.Error("Failed to fetch Jupiter quote:", err)
+		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+			Error: "Failed to fetch quote from Jupiter",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.Errorf("Jupiter API returned status: %d", resp.StatusCode)
+		// Try to read error body
+		body, _ := io.ReadAll(resp.Body)
+		logrus.Warnf("Jupiter API error body: %s", string(body))
+
+		c.JSON(resp.StatusCode, models.APIResponse{
+			Error: "Jupiter API error",
+		})
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Error("Failed to read Jupiter response:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to process quote data",
+		})
+		return
+	}
+
+	// Parse raw response to ensure it's valid JSON
+	var jupiterResp interface{}
+	if err := json.Unmarshal(body, &jupiterResp); err != nil {
+		logrus.Error("Failed to parse Jupiter JSON:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Invalid response from Jupiter",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: jupiterResp})
 }
 
 // GetDashboardStats returns dashboard overview statistics
@@ -829,7 +825,7 @@ func (h *Handler) GetPrices(c *gin.Context) {
 	// Calculated values
 	// If direct USD pair exists for xand, use it. Otherwise derive from SOL or ETH.
 	// Since raw response might not have 'usd' for xandeum (as seen in curl), we use SOL price.
-	
+
 	// Check if we have SOL price to convert
 	if okSol && prices.Xand.Sol > 0 {
 		solUsd := solData["usd"]
