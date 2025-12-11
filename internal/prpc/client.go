@@ -266,7 +266,7 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 				Performance:     0, // Placeholder
 				Stake:           stake,
 				RiskScore:       riskScore,
-				XDNScore:        0, // Cannot calculate without full metrics
+				XDNScore:        calculateXDNScore(stake, float64(p.Uptime), latency, riskScore),
 			}
 
 			results <- pnodeResult{pnode, nil}
@@ -399,7 +399,7 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 			Performance:     0,
 			Stake:           stake,
 			RiskScore:       riskScore,
-			XDNScore:        0,
+			XDNScore:        calculateXDNScore(stake, float64(targetPod.Uptime), latency, riskScore),
 		}
 
 		logrus.Debugf("Fetched real pNode %s from pRPC", id)
