@@ -114,7 +114,7 @@ func (h *Handler) HealthCheck(c *gin.Context) {
 func (h *Handler) GetQuote(c *gin.Context) {
 	// Forward all query parameters
 	queryString := c.Request.URL.RawQuery
-	targetURL := "https://quote-api.jup.ag/v6/quote?" + queryString
+	targetURL := "https://api.jup.ag/swap/v1/quote?" + queryString
 
 	resp, err := http.Get(targetURL)
 	if err != nil {
