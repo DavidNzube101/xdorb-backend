@@ -240,9 +240,17 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 			rewards := 0.0
 			riskScore := 0.0
 
+			// Safely get short pubkey
+			shortPubkey := "????"
+			if len(p.Pubkey) >= 4 {
+				shortPubkey = p.Pubkey[:4]
+			} else if len(p.Pubkey) > 0 {
+				shortPubkey = p.Pubkey
+			}
+
 			pnode := &models.PNode{
 				ID:              p.Pubkey,
-				Name:            fmt.Sprintf("Node %s (%s)", ip, p.Pubkey[:4]), // Include pubkey for uniqueness
+				Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey), // Include pubkey for uniqueness
 				Status:          status,
 				Uptime:          float64(p.Uptime), // Raw seconds
 				Latency:         latency,
@@ -365,9 +373,17 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 		rewards := 0.0
 		riskScore := 0.0
 
+		// Safely get short pubkey
+		shortPubkey := "????"
+		if len(targetPod.Pubkey) >= 4 {
+			shortPubkey = targetPod.Pubkey[:4]
+		} else if len(targetPod.Pubkey) > 0 {
+			shortPubkey = targetPod.Pubkey
+		}
+
 		pnode := &models.PNode{
 			ID:              targetPod.Pubkey,
-			Name:            fmt.Sprintf("Node %s (%s)", ip, targetPod.Pubkey[:4]),
+			Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
 			Status:          status,
 			Uptime:          float64(targetPod.Uptime), // Raw seconds
 			Latency:         latency,
