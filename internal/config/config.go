@@ -28,6 +28,11 @@ type Config struct {
 	GeminiAPIKey     string
 	JupiterAPIKey    string
 
+	// Firebase
+	FirebaseProjectID   string
+	FirebasePrivateKey  string
+	FirebaseClientEmail string
+
 	// Cache TTLs
 	PNodeCacheTTL   time.Duration
 	StatsCacheTTL   time.Duration
@@ -66,6 +71,10 @@ func Load() *Config {
 		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
 		GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
 		JupiterAPIKey:    getEnv("JUPITER_API_KEY", ""),
+
+		FirebaseProjectID:   getEnv("FIREBASE_PROJECT_ID", ""),
+		FirebasePrivateKey:  getEnv("FIREBASE_PRIVATE_KEY", ""),
+		FirebaseClientEmail: getEnv("FIREBASE_CLIENT_EMAIL", ""),
 
 		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 30*time.Second),
 		StatsCacheTTL:   getEnvAsDuration("STATS_CACHE_TTL", 5*time.Minute),

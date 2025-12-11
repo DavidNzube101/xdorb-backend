@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"xdorb-backend/internal"
 	"xdorb-backend/internal/cache"
 	"xdorb-backend/internal/config"
 	"xdorb-backend/internal/models"
@@ -22,17 +24,20 @@ import (
 
 // Handler contains all HTTP handlers
 type Handler struct {
-	config *config.Config
-	prpc   *prpc.Client
-	cache  *cache.Cache
+	config   *config.Config
+	prpc     *prpc.Client
+	cache    *cache.Cache
+	firebase *internal.FirebaseService
 }
 
 // NewHandler creates a new handler instance
 func NewHandler(cfg *config.Config) *Handler {
+	firebase, _ := internal.NewFirebaseService(cfg) // Ignore error for now
 	return &Handler{
-		config: cfg,
-		prpc:   prpc.NewClient(cfg),
-		cache:  cache.NewCache(cfg),
+		config:   cfg,
+		prpc:     prpc.NewClient(cfg),
+		cache:    cache.NewCache(cfg),
+		firebase: firebase,
 	}
 }
 
@@ -72,6 +77,9 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 		// Analytics
 		v1.GET("/analytics", h.GetAnalytics)
+
+		// Historical pNodes
+		v1.GET("/pnodes/historical", h.GetHistoricalPNodes)
 	}
 }
 
@@ -223,6 +231,22 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Save to Firebase concurrently
+	go func() {
+		for _, pnode := range pnodes {
+			if err := h.firebase.SavePNode(context.Background(), &pnode); err != nil {
+				logrus.Warn("Failed to save pNode to Firebase:", err)
+			}
+		}
+	}()
+
+	// Prune old nodes concurrently
+	go func() {
+		if err := h.firebase.PruneOldNodes(context.Background(), 30*24*time.Hour); err != nil {
+			logrus.Warn("Failed to prune old nodes:", err)
+		}
+	}()
 
 	// Cache the global list
 	if err := h.cache.Set(cacheKey, pnodes, h.config.PNodeCacheTTL); err != nil {
@@ -902,4 +926,35 @@ func (h *Handler) GetAnalytics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: analytics})
+}
+
+// GetHistoricalPNodes returns all historical pNodes from Firebase
+func (h *Handler) GetHistoricalPNodes(c *gin.Context) {
+	cacheKey := "pnodes:historical"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var pnodes []models.PNode
+		if err := cached.Unmarshal(&pnodes); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
+			return
+		}
+	}
+
+	// Fetch from Firebase
+	pnodes, err := h.firebase.GetAllPNodes(context.Background())
+	if err != nil {
+		logrus.Error("Failed to get historical pNodes:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch historical pNodes",
+		})
+		return
+	}
+
+	// Cache the result
+	if err := h.cache.Set(cacheKey, pnodes, h.config.PNodeCacheTTL); err != nil {
+		logrus.Warn("Failed to cache historical pNodes:", err)
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
 }
