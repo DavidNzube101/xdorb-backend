@@ -98,9 +98,17 @@ type StorageStats struct {
 
 // APIResponse represents a standard API response
 type APIResponse struct {
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-	Message string      `json:"message,omitempty"`
+	Data       interface{} `json:"data,omitempty"`
+	Pagination *Pagination `json:"pagination,omitempty"`
+	Error      string      `json:"error,omitempty"`
+	Message    string      `json:"message,omitempty"`
+}
+
+// Pagination represents pagination metadata
+type Pagination struct {
+	Total int `json:"total"`
+	Page  int `json:"page"`
+	Limit int `json:"limit"`
 }
 
 // HealthStatus represents the health check response

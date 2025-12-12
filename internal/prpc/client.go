@@ -304,143 +304,177 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 	return nil, fmt.Errorf("invalid response format: unexpected type %T", podsResp)
 }
 
-// GetPNodeByID fetches a specific pNode by ID
+// GetPNodeByID fetches a specific pNode by ID using concurrent lookups
 func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
-	// Try each seed to find the pod with matching pubkey
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	type result struct {
+		pod *prpc.Pod
+		err error
+	}
+
+	resultChan := make(chan result, len(c.cfg.PRPCSeedIPs))
+
+	// Query all seed nodes concurrently to find the pod
 	for _, seedIP := range c.cfg.PRPCSeedIPs {
-		seedClient := prpc.NewClient(seedIP)
-		podsResp, err := seedClient.GetPods()
-		if err != nil {
-			logrus.Warnf("Failed to get pods from seed %s: %v", seedIP, err)
-			continue
-		}
-
-		// Find the pod with matching pubkey
-		var targetPod *prpc.Pod
-		for _, pod := range podsResp.Pods {
-			if pod.Pubkey == id {
-				targetPod = &pod
-				break
+		go func(ip string) {
+			seedClient := prpc.NewClient(ip)
+			podsResp, err := seedClient.GetPods()
+			if err != nil {
+				resultChan <- result{nil, err}
+				return
 			}
-		}
-
-		if targetPod == nil {
-			continue // Not found in this seed, try next
-		}
-
-		// Extract IP and get stats
-		ip := strings.Split(targetPod.Address, ":")[0]
-		nodeClient := prpc.NewClient(ip)
-		stats, err := nodeClient.GetStats()
-		if err != nil {
-			logrus.Warnf("Failed to get stats for pNode %s (%s): %v", id, ip, err)
-			continue
-		}
-
-		// Measure latency
-		latency := measureLatency(ip)
-		if latency == 0 {
-			latency = rand.Intn(90) + 10
-		}
-
-		// Get geolocation
-		loc, err := geolocation.GetLocation(ip)
-		locationStr := "Unknown"
-		region := "Unknown"
-		lat := 0.0
-		lng := 0.0
-		if err == nil && loc != nil {
-			locationStr = loc.GetLocationString()
-			region = loc.Region
-			if region == "" {
-				region = loc.Country
+			for _, pod := range podsResp.Pods {
+				if pod.Pubkey == id {
+					resultChan <- result{&pod, nil}
+					return
+				}
 			}
-			lat = loc.Latitude
-			lng = loc.Longitude
-		}
+			// Send a "not found" result if the loop completes
+			resultChan <- result{nil, nil}
+		}(seedIP)
+	}
 
-		// Determine status
-		status := "active"
-		lastSeen := time.Unix(stats.LastUpdated, 0)
-		if time.Since(lastSeen) > 5*time.Minute {
-			status = "inactive"
-		} else if time.Since(lastSeen) > 1*time.Minute {
-			status = "warning"
+	var targetPod *prpc.Pod
+	for i := 0; i < len(c.cfg.PRPCSeedIPs); i++ {
+		select {
+		case res := <-resultChan:
+			if res.pod != nil {
+				targetPod = res.pod
+				goto found // Exit the loop and select once the pod is found
+			}
+			if res.err != nil {
+				logrus.Warnf("Failed to get pods from seed: %v", res.err)
+			}
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timed out waiting for pNode %s from seeds", id)
 		}
+	}
 
-		// Values not currently available via RPC
+found:
+	cancel() // Cancel other running goroutines
+
+	if targetPod == nil {
+		// If not found, return mock data as fallback
+		logrus.Warnf("pNode %s not found in gossip, returning mock data", id)
 		stake := 0.0
-		validations := 0
-		rewards := 0.0
 		riskScore := 0.0
-
-		// Safely get short pubkey
-		shortPubkey := "????"
-		if len(targetPod.Pubkey) >= 4 {
-			shortPubkey = targetPod.Pubkey[:4]
-		} else if len(targetPod.Pubkey) > 0 {
-			shortPubkey = targetPod.Pubkey
-		}
-
-		// Use pubkey as ID, fallback to IP if empty
-		pnodeID := targetPod.Pubkey
-		if pnodeID == "" {
-			pnodeID = ip
-		}
+		uptime := 0.0
+		latency := 0
 
 		pnode := &models.PNode{
-			ID:              pnodeID,
-			Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
-			Status:          status,
-			Uptime:          float64(targetPod.Uptime), // Raw seconds
-			Latency:         latency,
-			Validations:     validations,
-			Rewards:         rewards,
-			Location:        locationStr,
-			Region:          region,
-			Lat:             lat,
-			Lng:             lng,
-			StorageUsed:     targetPod.StorageUsed,
-			StorageCapacity: targetPod.StorageCommitted,
-			LastSeen:        lastSeen,
-			Performance:     0,
-			Stake:           stake,
-			RiskScore:       riskScore,
-			XDNScore:        calculateXDNScore(stake, float64(targetPod.Uptime), latency, riskScore),
+			ID:       id,
+			Name:     fmt.Sprintf("Node %s", id),
+			Status:   "unknown",
+			Uptime:   uptime,
+			Latency:  latency,
+			XDNScore: calculateXDNScore(stake, uptime, latency, riskScore),
 		}
-
-		logrus.Debugf("Fetched real pNode %s from pRPC", id)
 		return pnode, nil
 	}
 
-	// If not found, return mock data as fallback
-	logrus.Warnf("pNode %s not found in gossip, returning mock data", id)
+	// Concurrently get stats and measure latency for the found pod
+	ip := strings.Split(targetPod.Address, ":")[0]
+	var stats *prpc.NodeStats
+	var latency int
+	var statsErr error
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		nodeClient := prpc.NewClient(ip)
+		stats, statsErr = nodeClient.GetStats()
+	}()
+
+	go func() {
+		defer wg.Done()
+		latency = measureLatency(ip)
+	}()
+
+	wg.Wait()
+
+	if statsErr != nil {
+		return nil, fmt.Errorf("failed to get stats for pNode %s (%s): %w", id, ip, statsErr)
+	}
+
+	if latency == 0 {
+		latency = rand.Intn(90) + 10
+	}
+
+	// Get geolocation
+	loc, err := geolocation.GetLocation(ip)
+	locationStr := "Unknown"
+	region := "Unknown"
+	lat := 0.0
+	lng := 0.0
+	if err == nil && loc != nil {
+		locationStr = loc.GetLocationString()
+		region = loc.Region
+		if region == "" {
+			region = loc.Country
+		}
+		lat = loc.Latitude
+		lng = loc.Longitude
+	}
+
+	// Determine status
+	status := "active"
+	lastSeen := time.Unix(stats.LastUpdated, 0)
+	if time.Since(lastSeen) > 5*time.Minute {
+		status = "inactive"
+	} else if time.Since(lastSeen) > 1*time.Minute {
+		status = "warning"
+	}
+
+	// Values not currently available via RPC
 	stake := 0.0
 	riskScore := 0.0
-	uptime := 0.0
-	latency := 0
+
+	// Safely get short pubkey
+	shortPubkey := "????"
+	if len(targetPod.Pubkey) >= 4 {
+		shortPubkey = targetPod.Pubkey[:4]
+	} else if len(targetPod.Pubkey) > 0 {
+		shortPubkey = targetPod.Pubkey
+	}
+
+	// Use pubkey as ID, fallback to IP if empty
+	pnodeID := targetPod.Pubkey
+	if pnodeID == "" {
+		pnodeID = ip
+	}
+
+	// Convert uptime from seconds to percentage over 24 hours, capped at 100%
+	uptimePercentage := (float64(targetPod.Uptime) / 86400.0) * 100.0
+	if uptimePercentage > 100.0 {
+		uptimePercentage = 100.0
+	}
 
 	pnode := &models.PNode{
-		ID:              id,
-		Name:            fmt.Sprintf("Node %s", id),
-		Status:          "unknown",
-		Uptime:          uptime,
+		ID:              pnodeID,
+		Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
+		Status:          status,
+		Uptime:          uptimePercentage,
 		Latency:         latency,
 		Validations:     0,
 		Rewards:         0,
-		Location:        "Unknown",
-		Region:          "Unknown",
-		Lat:             0,
-		Lng:             0,
-		StorageUsed:     0,
-		StorageCapacity: 0,
-		LastSeen:        time.Now(),
+		Location:        locationStr,
+		Region:          region,
+		Lat:             lat,
+		Lng:             lng,
+		StorageUsed:     targetPod.StorageUsed,
+		StorageCapacity: targetPod.StorageCommitted,
+		LastSeen:        lastSeen,
 		Performance:     0,
 		Stake:           stake,
 		RiskScore:       riskScore,
-		XDNScore:        calculateXDNScore(stake, uptime, latency, riskScore),
+		XDNScore:        calculateXDNScore(stake, uptimePercentage, latency, riskScore),
 	}
 
+	logrus.Debugf("Fetched real pNode %s from pRPC", id)
 	return pnode, nil
 }
 

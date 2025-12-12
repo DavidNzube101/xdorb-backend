@@ -320,7 +320,14 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 
 	paginated := filtered[start:end]
 
-	c.JSON(http.StatusOK, models.APIResponse{Data: paginated})
+	c.JSON(http.StatusOK, models.APIResponse{
+		Data: paginated,
+		Pagination: &models.Pagination{
+			Total: total,
+			Page:  page,
+			Limit: limit,
+		},
+	})
 }
 
 // RefreshCache clears all cached data and fetches fresh pNodes
@@ -764,26 +771,75 @@ func (h *Handler) GetNetworkHistory(c *gin.Context) {
 		}
 	}
 
-	// Mock historical network data - replace with real pRPC call
-	var history []models.PNodeHistory
-	now := time.Now()
-	points := 24 // 24 hours default
-	if timeRange == "7d" {
-		points = 168 // 7 days
-	} else if timeRange == "30d" {
-		points = 720 // 30 days
+	// Fetch all historical nodes from Firebase
+	allNodes, err := h.firebase.GetAllPNodes(c.Request.Context())
+	if err != nil {
+		logrus.Error("Failed to get historical pNodes for network history:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch historical data",
+		})
+		return
 	}
 
-	for i := points; i >= 0; i-- {
-		timestamp := now.Add(-time.Duration(i) * time.Hour)
-		point := models.PNodeHistory{
-			Timestamp:   timestamp.Unix(),
-			Latency:     40 + rand.Intn(20),                                   // 40-60ms average network latency
-			Uptime:      97.0 + rand.Float64()*3.0,                            // 97-100% network uptime
-			StorageUsed: int64(700000+rand.Intn(100000)) * 1024 * 1024 * 1024, // TB in bytes
-			Rewards:     rand.Float64() * 1000,                                // Network-wide rewards per hour
+	if len(allNodes) == 0 {
+		c.JSON(http.StatusOK, models.APIResponse{Data: []models.PNodeHistory{}})
+		return
+	}
+
+	// Determine time range and grouping interval
+	var cutoff time.Time
+	var interval time.Duration
+	now := time.Now()
+
+	switch timeRange {
+	case "7d":
+		cutoff = now.Add(-7 * 24 * time.Hour)
+		interval = 6 * time.Hour // 4 points per day
+	case "30d":
+		cutoff = now.Add(-30 * 24 * time.Hour)
+		interval = 24 * time.Hour // 1 point per day
+	default: // "24h"
+		cutoff = now.Add(-24 * time.Hour)
+		interval = 1 * time.Hour // 1 point per hour
+	}
+
+	// Group nodes by time interval
+	groupedUptime := make(map[time.Time][]float64)
+	for _, node := range allNodes {
+		if node.LastSeen.Before(cutoff) {
+			continue
 		}
-		history = append(history, point)
+		// Truncate the timestamp to the grouping interval
+		truncatedTime := node.LastSeen.Truncate(interval)
+		groupedUptime[truncatedTime] = append(groupedUptime[truncatedTime], node.Uptime)
+	}
+
+	// Calculate average uptime for each interval
+	var history []models.PNodeHistory
+	for timestamp, uptimes := range groupedUptime {
+		if len(uptimes) == 0 {
+			continue
+		}
+		var totalUptime float64
+		for _, u := range uptimes {
+			totalUptime += u
+		}
+		avgUptime := totalUptime / float64(len(uptimes))
+
+		history = append(history, models.PNodeHistory{
+			Timestamp: timestamp.Unix(),
+			Uptime:    avgUptime,
+			// Other fields can be calculated similarly if needed
+		})
+	}
+
+	// Sort history by timestamp
+	for i := 0; i < len(history)-1; i++ {
+		for j := i + 1; j < len(history); j++ {
+			if history[i].Timestamp > history[j].Timestamp {
+				history[i], history[j] = history[j], history[i]
+			}
+		}
 	}
 
 	// Cache the result
