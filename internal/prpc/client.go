@@ -1,6 +1,7 @@
 package prpc
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net"
@@ -172,12 +173,31 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 	}
 
 	// Parse the response to extract pods
-	respMap, ok := podsResp.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid response format")
+	// The pRPC library might return the response as a struct or JSON string
+	// Let's handle it by converting to JSON first
+	var jsonResponse map[string]interface{}
+
+	// Try to convert the response to JSON
+	if respBytes, ok := podsResp.([]byte); ok {
+		// If it's bytes, unmarshal
+		if err := json.Unmarshal(respBytes, &jsonResponse); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		}
+	} else if respStr, ok := podsResp.(string); ok {
+		// If it's a string, unmarshal
+		if err := json.Unmarshal([]byte(respStr), &jsonResponse); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		}
+	} else {
+		// Try direct cast to map
+		var ok bool
+		jsonResponse, ok = podsResp.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid response format: unexpected type %T", podsResp)
+		}
 	}
 
-	result, ok := respMap["result"].(map[string]interface{})
+	result, ok := jsonResponse["result"].(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("no result field in response")
 	}
