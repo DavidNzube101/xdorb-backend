@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	cloud.google.com/go/firestore v1.20.0
 	firebase.google.com/go v3.13.0+incompatible
-	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251210162325-6dac1e7d28f2
+	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251212102422-0d15b1641238
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/ip2location/ip2location-go/v9 v9.8.0

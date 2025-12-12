@@ -22,6 +22,7 @@ type Config struct {
 	// pRPC
 	PRPCEndpoint string
 	PRPCSeedIPs  []string
+	PRPCTimeout  time.Duration
 
 	// Telegram Bot
 	TelegramBotToken      string
@@ -58,6 +59,15 @@ func Load() *Config {
 		validAPIKeys[i] = strings.TrimSpace(key)
 	}
 
+	defaultSeedIPs := []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"}
+	seedIPsStr := getEnv("PRPC_SEED_IPS", "")
+	var seedIPs []string
+	if seedIPsStr != "" {
+		seedIPs = strings.Split(seedIPsStr, ",")
+	} else {
+		seedIPs = defaultSeedIPs
+	}
+
 	cfg := &Config{
 		Environment:  getEnv("ENVIRONMENT", "development"),
 		Port:         getEnv("PORT", "8080"),
@@ -68,7 +78,8 @@ func Load() *Config {
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 
 		PRPCEndpoint:          getEnv("PRPC_ENDPOINT", "https://xandeum.network"),
-		PRPCSeedIPs:           []string{"173.212.220.65", "161.97.97.41", "192.190.136.36", "192.190.136.38", "207.244.255.1", "192.190.136.28", "192.190.136.29", "173.212.203.145"},
+		PRPCSeedIPs:           seedIPs,
+		PRPCTimeout:           getEnvAsDuration("PRPC_TIMEOUT", 10*time.Second),
 		TelegramBotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
 		TelegramAdminPassword: getEnv("TELEGRAM_ADMIN_PASSWORD", ""),
 		GeminiAPIKey:          getEnv("GEMINI_API_KEY", ""),
@@ -78,7 +89,7 @@ func Load() *Config {
 		FirebasePrivateKey:  getEnv("FIREBASE_PRIVATE_KEY", ""),
 		FirebaseClientEmail: getEnv("FIREBASE_CLIENT_EMAIL", ""),
 
-		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 30*time.Second),
+		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 2*time.Minute),
 		StatsCacheTTL:   getEnvAsDuration("STATS_CACHE_TTL", 5*time.Minute),
 		HistoryCacheTTL: getEnvAsDuration("HISTORY_CACHE_TTL", time.Hour),
 

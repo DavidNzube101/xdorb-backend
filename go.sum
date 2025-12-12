@@ -24,8 +24,8 @@ cloud.google.com/go/trace v1.11.6 h1:2O2zjPzqPYAHrn3OKl029qlqG6W8ZdYaOWRyr8NgMT4
 cloud.google.com/go/trace v1.11.6/go.mod h1:GA855OeDEBiBMzcckLPE2kDunIpC72N+Pq8WFieFjnI=
 firebase.google.com/go v3.13.0+incompatible h1:3TdYC3DDi6aHn20qoRkxwGqNgdjtblwVAyRLQwGn/+4=
 firebase.google.com/go v3.13.0+incompatible/go.mod h1:xlah6XbEyW6tbfSklcfe5FHJIwjt8toICdV5Wh9ptHs=
-github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251210162325-6dac1e7d28f2 h1:eHcESBst1rz11ZU2Clq4r3xeffowS4smBeoq3uE2S1I=
-github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251210162325-6dac1e7d28f2/go.mod h1:INwL4Iws68Upfg24bNsq1wbG2ohE/arWkN5LgJcOyzo=
+github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251212102422-0d15b1641238 h1:lq0W2e7NzYTawOc2izWI1vL+QBG5KExxFN4q/53SA80=
+github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251212102422-0d15b1641238/go.mod h1:INwL4Iws68Upfg24bNsq1wbG2ohE/arWkN5LgJcOyzo=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.30.0 h1:sBEjpZlNHzK1voKq9695PJSX2o5NEXl7/OL3coiIY0c=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.30.0/go.mod h1:P4WPRUkOhJC13W//jWpyfJNDAIpvRbAUIYLX/4jtlE0=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.53.0 h1:owcC2UnmsZycprQ5RfRgjydWhuoxg71LUfyiQdijZuM=

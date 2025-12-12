@@ -1,7 +1,6 @@
 package prpc
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -155,7 +154,7 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 
 	// Try each seed IP until one works
 	for _, seedIP := range c.cfg.PRPCSeedIPs {
-		seedClient := prpc.NewClient(seedIP)
+		seedClient := prpc.NewClient(seedIP, c.cfg.PRPCTimeout)
 		resp, err := seedClient.GetPodsWithStats()
 		if err != nil {
 			logrus.Warnf("Failed to get pods with stats from seed %s: %v", seedIP, err)
@@ -305,74 +304,15 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 	return nil, fmt.Errorf("invalid response format: unexpected type %T", podsResp)
 }
 
-// GetPNodeByID fetches a specific pNode by ID using concurrent lookups
+// GetPNodeByID fetches a specific pNode by ID using the library's concurrent lookup
 func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	type result struct {
-		pod *prpc.Pod
-		err error
+	// Use the library's FindPNode function
+	findOpts := &prpc.FindPNodeOptions{
+		Timeout: c.cfg.PRPCTimeout,
 	}
-
-	resultChan := make(chan result, len(c.cfg.PRPCSeedIPs))
-
-	// Query all seed nodes concurrently to find the pod
-	for _, seedIP := range c.cfg.PRPCSeedIPs {
-		go func(ip string) {
-			seedClient := prpc.NewClient(ip)
-			podsResp, err := seedClient.GetPods()
-			if err != nil {
-				resultChan <- result{nil, err}
-				return
-			}
-			for _, pod := range podsResp.Pods {
-				if pod.Pubkey == id {
-					resultChan <- result{&pod, nil}
-					return
-				}
-			}
-			// Send a "not found" result if the loop completes
-			resultChan <- result{nil, nil}
-		}(seedIP)
-	}
-
-	var targetPod *prpc.Pod
-	for i := 0; i < len(c.cfg.PRPCSeedIPs); i++ {
-		select {
-		case res := <-resultChan:
-			if res.pod != nil {
-				targetPod = res.pod
-				goto found // Exit the loop and select once the pod is found
-			}
-			if res.err != nil {
-				logrus.Warnf("Failed to get pods from seed: %v", res.err)
-			}
-		case <-ctx.Done():
-			return nil, fmt.Errorf("timed out waiting for pNode %s from seeds", id)
-		}
-	}
-
-found:
-	cancel() // Cancel other running goroutines
-
-	if targetPod == nil {
-		// If not found, return mock data as fallback
-		logrus.Warnf("pNode %s not found in gossip, returning mock data", id)
-		stake := 0.0
-		riskScore := 0.0
-		uptime := 0.0
-		latency := 0
-
-		pnode := &models.PNode{
-			ID:       id,
-			Name:     fmt.Sprintf("Node %s", id),
-			Status:   "unknown",
-			Uptime:   uptime,
-			Latency:  latency,
-			XDNScore: calculateXDNScore(stake, uptime, latency, riskScore),
-		}
-		return pnode, nil
+	targetPod, err := prpc.FindPNode(id, findOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find pNode %s on any seed: %w", id, err)
 	}
 
 	// Concurrently get stats and measure latency for the found pod
@@ -386,7 +326,7 @@ found:
 
 	go func() {
 		defer wg.Done()
-		nodeClient := prpc.NewClient(ip)
+		nodeClient := prpc.NewClient(ip, c.cfg.PRPCTimeout)
 		stats, statsErr = nodeClient.GetStats()
 	}()
 
