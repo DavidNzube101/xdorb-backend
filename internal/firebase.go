@@ -89,7 +89,12 @@ func (fs *FirebaseService) SavePNode(ctx context.Context, pnode *models.PNode) e
 		"stake":           pnode.Stake,
 		"riskScore":       pnode.RiskScore,
 		"xdnScore":        pnode.XDNScore,
-		"updatedAt":       time.Now().Unix(),
+		// New fields
+		"isPublic":            pnode.IsPublic,
+		"rpcPort":             pnode.RpcPort,
+		"version":             pnode.Version,
+		"storageUsagePercent": pnode.StorageUsagePercent,
+		"updatedAt":           time.Now().Unix(),
 	})
 	return err
 }
@@ -126,6 +131,11 @@ func (fs *FirebaseService) GetAllPNodes(ctx context.Context) ([]models.PNode, er
 			Stake:           getFloat64(data, "stake"),
 			RiskScore:       getFloat64(data, "riskScore"),
 			XDNScore:        getFloat64(data, "xdnScore"),
+			// New fields
+			IsPublic:            getBool(data, "isPublic"),
+			RpcPort:             int(getFloat64(data, "rpcPort")),
+			Version:             getString(data, "version"),
+			StorageUsagePercent: getFloat64(data, "storageUsagePercent"),
 		}
 		pnodes = append(pnodes, pnode)
 	}
@@ -183,4 +193,13 @@ func getFloat64(data map[string]interface{}, key string) float64 {
 		}
 	}
 	return 0
+}
+
+func getBool(data map[string]interface{}, key string) bool {
+	if val, ok := data[key]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
 }

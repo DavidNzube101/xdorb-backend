@@ -22,6 +22,11 @@ type PNode struct {
 	Stake           float64   `json:"stake"`
 	RiskScore       float64   `json:"riskScore"`
 	XDNScore        float64   `json:"xdnScore"` // Xandeum Node Score
+	// New fields from rich API
+	IsPublic            bool    `json:"isPublic"`
+	RpcPort             int     `json:"rpcPort"`
+	Version             string  `json:"version"`
+	StorageUsagePercent float64 `json:"storageUsagePercent"`
 }
 
 // DashboardStats represents dashboard overview statistics
