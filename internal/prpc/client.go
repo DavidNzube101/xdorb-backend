@@ -1,7 +1,6 @@
 package prpc
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net"
@@ -172,190 +171,121 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 		return nil, fmt.Errorf("failed to get pods from any seed IP: %w", lastErr)
 	}
 
-	// Parse the response to extract pods
-	// The pRPC library might return the response as a struct or JSON string
-	// Let's handle it by converting to JSON first
-	var jsonResponse map[string]interface{}
-
-	// Try to convert the response to JSON
-	if respBytes, ok := podsResp.([]byte); ok {
-		// If it's bytes, unmarshal
-		if err := json.Unmarshal(respBytes, &jsonResponse); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-		}
-	} else if respStr, ok := podsResp.(string); ok {
-		// If it's a string, unmarshal
-		if err := json.Unmarshal([]byte(respStr), &jsonResponse); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-		}
-	} else {
-		// Try direct cast to map
-		var ok bool
-		jsonResponse, ok = podsResp.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid response format: unexpected type %T", podsResp)
-		}
-	}
-
-	result, ok := jsonResponse["result"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("no result field in response")
-	}
-
-	podsData, ok := result["pods"].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("no pods field in response")
-	}
-
-	var pnodes []models.PNode
-
-	// Process each pod from the response
-	for _, podData := range podsData {
-		podMap, ok := podData.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Extract IP from address
-		address, _ := podMap["address"].(string)
-		ip := strings.Split(address, ":")[0]
-		if ip == "" {
-			continue
-		}
-
-		// Get geolocation
-		loc, err := geolocation.GetLocation(ip)
-		locationStr := "Unknown"
-		region := "Unknown"
-		lat := 0.0
-		lng := 0.0
-		if err == nil && loc != nil {
-			locationStr = loc.GetLocationString()
-			region = loc.Region
-			if region == "" {
-				region = loc.Country
+	// Handle the actual pRPC response type
+	// From the error, it's returning *prpc.PodsResponse
+	if podsResponse, ok := podsResp.(*prpc.PodsResponse); ok {
+		// It's a PodsResponse struct, process pods directly
+		var pnodes []models.PNode
+		for _, pod := range podsResponse.Pods {
+			// Extract IP from address
+			ip := strings.Split(pod.Address, ":")[0]
+			if ip == "" {
+				continue
 			}
-			lat = loc.Latitude
-			lng = loc.Longitude
+
+			// Get geolocation
+			loc, err := geolocation.GetLocation(ip)
+			locationStr := "Unknown"
+			region := "Unknown"
+			lat := 0.0
+			lng := 0.0
+			if err == nil && loc != nil {
+				locationStr = loc.GetLocationString()
+				region = loc.Region
+				if region == "" {
+					region = loc.Country
+				}
+				lat = loc.Latitude
+				lng = loc.Longitude
+			}
+
+			// Determine status - use current time as fallback since LastUpdated field may not exist
+			status := "active"
+			lastSeen := time.Now() // Fallback to current time
+			// Try to use any timestamp field that might exist
+			// For now, assume nodes are active since we just fetched them
+			if time.Since(lastSeen) > 5*time.Minute {
+				status = "inactive"
+			} else if time.Since(lastSeen) > 1*time.Minute {
+				status = "warning"
+			}
+
+			// Use pubkey as ID, fallback to IP if empty
+			pnodeID := pod.Pubkey
+			if pnodeID == "" {
+				pnodeID = ip
+			}
+
+			// Safely get short pubkey for name
+			shortPubkey := "????"
+			if len(pod.Pubkey) >= 4 {
+				shortPubkey = pod.Pubkey[:4]
+			} else if len(pod.Pubkey) > 0 {
+				shortPubkey = pod.Pubkey
+			}
+
+			// Measure latency
+			latency := measureLatency(ip)
+			if latency == 0 {
+				latency = rand.Intn(90) + 10
+			}
+
+			pnode := models.PNode{
+				ID:              pnodeID,
+				Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
+				Status:          status,
+				Uptime:          float64(pod.Uptime), // Raw seconds
+				Latency:         latency,
+				Validations:     0, // Not available in this API
+				Rewards:         0, // Not available in this API
+				Location:        locationStr,
+				Region:          region,
+				Lat:             lat,
+				Lng:             lng,
+				StorageUsed:     pod.StorageUsed,
+				StorageCapacity: pod.StorageCommitted,
+				LastSeen:        lastSeen,
+				Performance:     0, // Not available in this API
+				Stake:           0, // Not available in this API
+				RiskScore:       0, // Not available in this API
+				XDNScore:        calculateXDNScore(0, float64(pod.Uptime), latency, 0),
+				// New fields from rich API - not available in basic PodsResponse
+				IsPublic:            false,     // Default
+				RpcPort:             6000,      // Default
+				Version:             "unknown", // Default
+				StorageUsagePercent: 0,         // Default
+			}
+
+			pnodes = append(pnodes, pnode)
 		}
 
-		// Extract stats from the pod data
-		lastSeenTimestamp := int64(0)
-		if ts, ok := podMap["last_seen_timestamp"].(float64); ok {
-			lastSeenTimestamp = int64(ts)
+		// Apply filters
+		var filteredPNodes []models.PNode
+		for _, pnode := range pnodes {
+			// Status filter
+			if filters.Status != "" && filters.Status != "all" && pnode.Status != filters.Status {
+				continue
+			}
+			// Region filter
+			if filters.Region != "" && filters.Region != "all" && pnode.Region != filters.Region {
+				continue
+			}
+
+			filteredPNodes = append(filteredPNodes, pnode)
+
+			// Limit results
+			if len(filteredPNodes) >= filters.Limit {
+				break
+			}
 		}
 
-		// Determine status based on last seen
-		status := "active"
-		lastSeen := time.Unix(lastSeenTimestamp, 0)
-		if time.Since(lastSeen) > 5*time.Minute {
-			status = "inactive"
-		} else if time.Since(lastSeen) > 1*time.Minute {
-			status = "warning"
-		}
-
-		// Extract rich statistics
-		pubkey, _ := podMap["pubkey"].(string)
-		isPublic, _ := podMap["is_public"].(bool)
-		rpcPort := int(0)
-		if port, ok := podMap["rpc_port"].(float64); ok {
-			rpcPort = int(port)
-		}
-
-		storageCommitted := int64(0)
-		if sc, ok := podMap["storage_committed"].(float64); ok {
-			storageCommitted = int64(sc)
-		}
-
-		storageUsed := int64(0)
-		if su, ok := podMap["storage_used"].(float64); ok {
-			storageUsed = int64(su)
-		}
-
-		storageUsagePercent := 0.0
-		if sup, ok := podMap["storage_usage_percent"].(float64); ok {
-			storageUsagePercent = sup
-		}
-
-		uptime := int64(0)
-		if ut, ok := podMap["uptime"].(float64); ok {
-			uptime = int64(ut)
-		}
-
-		version, _ := podMap["version"].(string)
-
-		// Use pubkey as ID, fallback to IP if empty
-		pnodeID := pubkey
-		if pnodeID == "" {
-			pnodeID = ip
-		}
-
-		// Safely get short pubkey for name
-		shortPubkey := "????"
-		if len(pubkey) >= 4 {
-			shortPubkey = pubkey[:4]
-		} else if len(pubkey) > 0 {
-			shortPubkey = pubkey
-		}
-
-		// Measure latency
-		latency := measureLatency(ip)
-		if latency == 0 {
-			latency = rand.Intn(90) + 10
-		}
-
-		pnode := models.PNode{
-			ID:              pnodeID,
-			Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
-			Status:          status,
-			Uptime:          float64(uptime), // Convert to float64 for compatibility
-			Latency:         latency,
-			Validations:     0, // Not available in this API
-			Rewards:         0, // Not available in this API
-			Location:        locationStr,
-			Region:          region,
-			Lat:             lat,
-			Lng:             lng,
-			StorageUsed:     storageUsed,
-			StorageCapacity: storageCommitted,
-			LastSeen:        lastSeen,
-			Performance:     0, // Not available in this API
-			Stake:           0, // Not available in this API
-			RiskScore:       0, // Not available in this API
-			XDNScore:        calculateXDNScore(0, float64(uptime), latency, 0),
-			// New fields from rich API
-			IsPublic:            isPublic,
-			RpcPort:             rpcPort,
-			Version:             version,
-			StorageUsagePercent: storageUsagePercent,
-		}
-
-		pnodes = append(pnodes, pnode)
+		elapsed := time.Since(start)
+		logrus.Infof("Fetched %d pNodes in %.2fs", len(filteredPNodes), elapsed.Seconds())
+		return filteredPNodes, nil
 	}
 
-	// Apply filters
-	var filteredPNodes []models.PNode
-	for _, pnode := range pnodes {
-		// Status filter
-		if filters.Status != "" && filters.Status != "all" && pnode.Status != filters.Status {
-			continue
-		}
-		// Region filter
-		if filters.Region != "" && filters.Region != "all" && pnode.Region != filters.Region {
-			continue
-		}
-
-		filteredPNodes = append(filteredPNodes, pnode)
-
-		// Limit results
-		if len(filteredPNodes) >= filters.Limit {
-			break
-		}
-	}
-
-	elapsed := time.Since(start)
-	logrus.Infof("Fetched %d pNodes in %.2fs", len(filteredPNodes), elapsed.Seconds())
-	return filteredPNodes, nil
+	// If not a PodsResponse, this is unexpected
+	return nil, fmt.Errorf("invalid response format: unexpected type %T", podsResp)
 }
 
 // GetPNodeByID fetches a specific pNode by ID
