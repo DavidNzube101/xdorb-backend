@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"xdorb-backend/internal/config"
@@ -174,90 +175,105 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 	// Handle the actual pRPC response type
 	// From the error, it's returning *prpc.PodsResponse
 	if podsResponse, ok := podsResp.(*prpc.PodsResponse); ok {
-		// It's a PodsResponse struct, process pods directly
+		// It's a PodsResponse struct, process pods concurrently
 		var pnodes []models.PNode
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+
 		for _, pod := range podsResponse.Pods {
-			// Extract IP from address
-			ip := strings.Split(pod.Address, ":")[0]
-			if ip == "" {
-				continue
-			}
-
-			// Get geolocation
-			loc, err := geolocation.GetLocation(ip)
-			locationStr := "Unknown"
-			region := "Unknown"
-			lat := 0.0
-			lng := 0.0
-			if err == nil && loc != nil {
-				locationStr = loc.GetLocationString()
-				region = loc.Region
-				if region == "" {
-					region = loc.Country
+			wg.Add(1)
+			go func(pod prpc.Pod) {
+				defer wg.Done()
+				// Extract IP from address
+				ip := strings.Split(pod.Address, ":")[0]
+				if ip == "" {
+					return
 				}
-				lat = loc.Latitude
-				lng = loc.Longitude
-			}
 
-			// Determine status - use current time as fallback since LastUpdated field may not exist
-			status := "active"
-			lastSeen := time.Now() // Fallback to current time
-			// Try to use any timestamp field that might exist
-			// For now, assume nodes are active since we just fetched them
-			if time.Since(lastSeen) > 5*time.Minute {
-				status = "inactive"
-			} else if time.Since(lastSeen) > 1*time.Minute {
-				status = "warning"
-			}
+				// Get geolocation
+				loc, err := geolocation.GetLocation(ip)
+				locationStr := "Unknown"
+				region := "Unknown"
+				lat := 0.0
+				lng := 0.0
+				if err == nil && loc != nil {
+					locationStr = loc.GetLocationString()
+					region = loc.Region
+					if region == "" {
+						region = loc.Country
+					}
+					lat = loc.Latitude
+					lng = loc.Longitude
+				}
 
-			// Use pubkey as ID, fallback to IP if empty
-			pnodeID := pod.Pubkey
-			if pnodeID == "" {
-				pnodeID = ip
-			}
+				// Determine status
+				status := "active"
+				lastSeen := time.Unix(pod.LastSeenTimestamp, 0)
+				if time.Since(lastSeen) > 5*time.Minute {
+					status = "inactive"
+				} else if time.Since(lastSeen) > 1*time.Minute {
+					status = "warning"
+				}
 
-			// Safely get short pubkey for name
-			shortPubkey := "????"
-			if len(pod.Pubkey) >= 4 {
-				shortPubkey = pod.Pubkey[:4]
-			} else if len(pod.Pubkey) > 0 {
-				shortPubkey = pod.Pubkey
-			}
+				// Use pubkey as ID, fallback to IP if empty
+				pnodeID := pod.Pubkey
+				if pnodeID == "" {
+					pnodeID = ip
+				}
 
-			// Measure latency
-			latency := measureLatency(ip)
-			if latency == 0 {
-				latency = rand.Intn(90) + 10
-			}
+				// Safely get short pubkey for name
+				shortPubkey := "????"
+				if len(pod.Pubkey) >= 4 {
+					shortPubkey = pod.Pubkey[:4]
+				} else if len(pod.Pubkey) > 0 {
+					shortPubkey = pod.Pubkey
+				}
 
-			pnode := models.PNode{
-				ID:              pnodeID,
-				Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
-				Status:          status,
-				Uptime:          float64(pod.Uptime), // Raw seconds
-				Latency:         latency,
-				Validations:     0, // Not available in this API
-				Rewards:         0, // Not available in this API
-				Location:        locationStr,
-				Region:          region,
-				Lat:             lat,
-				Lng:             lng,
-				StorageUsed:     pod.StorageUsed,
-				StorageCapacity: pod.StorageCommitted,
-				LastSeen:        lastSeen,
-				Performance:     0, // Not available in this API
-				Stake:           0, // Not available in this API
-				RiskScore:       0, // Not available in this API
-				XDNScore:        calculateXDNScore(0, float64(pod.Uptime), latency, 0),
-				// New fields from rich API - not available in basic PodsResponse
-				IsPublic:            false,     // Default
-				RpcPort:             6000,      // Default
-				Version:             "unknown", // Default
-				StorageUsagePercent: 0,         // Default
-			}
+				// Measure latency
+				latency := measureLatency(ip)
+				if latency == 0 {
+					latency = rand.Intn(90) + 10
+				}
 
-			pnodes = append(pnodes, pnode)
+				// Convert uptime from seconds to percentage over 24 hours, capped at 100%
+				uptimePercentage := (float64(pod.Uptime) / 86400.0) * 100.0
+				if uptimePercentage > 100.0 {
+					uptimePercentage = 100.0
+				}
+
+				pnode := models.PNode{
+					ID:              pnodeID,
+					Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
+					Status:          status,
+					Uptime:          uptimePercentage,
+					Latency:         latency,
+					Validations:     0, // Not available in this API
+					Rewards:         0, // Not available in this API
+					Location:        locationStr,
+					Region:          region,
+					Lat:             lat,
+					Lng:             lng,
+					StorageUsed:     pod.StorageUsed,
+					StorageCapacity: pod.StorageCommitted,
+					LastSeen:        lastSeen,
+					Performance:     0, // Not available in this API
+					Stake:           0, // Not available in this API
+					RiskScore:       0, // Not available in this API
+					XDNScore:        calculateXDNScore(0, uptimePercentage, latency, 0),
+					// New fields from rich API - not available in basic PodsResponse
+					IsPublic:            false,     // Default
+					RpcPort:             6000,      // Default
+					Version:             "unknown", // Default
+					StorageUsagePercent: 0,         // Default
+				}
+
+				mu.Lock()
+				pnodes = append(pnodes, pnode)
+				mu.Unlock()
+			}(pod)
 		}
+
+		wg.Wait()
 
 		// Apply filters
 		var filteredPNodes []models.PNode
