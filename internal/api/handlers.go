@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +63,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 		v1.GET("/pnodes", h.GetPNodes)
 		v1.POST("/pnodes/refresh", h.RefreshCache)
 		v1.GET("/pnodes/:id", h.GetPNodeByID)
+		v1.GET("/pnodes/:id/registered", h.CheckPNodeRegistered)
 		v1.GET("/pnodes/:id/history", h.GetPNodeHistory)
 		v1.GET("/pnodes/:id/peers", h.GetPNodePeers)
 		v1.GET("/pnodes/:id/alerts", h.GetPNodeAlerts)
@@ -957,4 +960,62 @@ func (h *Handler) GetHistoricalPNodes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
+}
+
+// CheckPNodeRegistered checks if a pNode is registered by looking up its pubkey in the CSV file
+func (h *Handler) CheckPNodeRegistered(c *gin.Context) {
+	id := c.Param("id")
+
+	// The ID is the pubkey, so we can check directly against the CSV
+	registered, err := h.isPNodeRegistered(id)
+	if err != nil {
+		logrus.Error("Failed to check pNode registration:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to check registration status",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: map[string]bool{
+		"registered": registered,
+	}})
+}
+
+// isPNodeRegistered checks if a pubkey exists in the registered pNodes CSV
+func (h *Handler) isPNodeRegistered(pubkey string) (bool, error) {
+	if pubkey == "" {
+		return false, nil
+	}
+
+	// Read the CSV file
+	file, err := h.readCSVFile("pnodes-data-2025-12-11.csv")
+	if err != nil {
+		return false, fmt.Errorf("failed to read CSV file: %w", err)
+	}
+
+	// Check if pubkey exists in the CSV (column index 1 is "pNode Identity Pubkey")
+	for _, row := range file {
+		if len(row) > 1 && strings.TrimSpace(row[1]) == pubkey {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// readCSVFile reads a CSV file and returns the rows as slices of strings
+func (h *Handler) readCSVFile(filename string) ([][]string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+
+	return rows, nil
 }
