@@ -28,6 +28,11 @@ type PNode struct {
 	RpcPort             int     `json:"rpcPort"`
 	Version             string  `json:"version"`
 	StorageUsagePercent float64 `json:"storageUsagePercent"`
+	CPUPercent          float64 `json:"cpuPercent"`
+	MemoryUsed          int64   `json:"memoryUsed"`
+	MemoryTotal         int64   `json:"memoryTotal"`
+	PacketsIn           int     `json:"packetsIn"`
+	PacketsOut          int     `json:"packetsOut"`
 }
 
 // DashboardStats represents dashboard overview statistics

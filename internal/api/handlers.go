@@ -15,6 +15,7 @@ import (
 	"xdorb-backend/internal"
 	"xdorb-backend/internal/cache"
 	"xdorb-backend/internal/config"
+	"xdorb-backend/internal/gemini"
 	"xdorb-backend/internal/models"
 	"xdorb-backend/internal/prpc"
 	"xdorb-backend/pkg/middleware"
@@ -25,20 +26,28 @@ import (
 
 // Handler contains all HTTP handlers
 type Handler struct {
-	config   *config.Config
-	prpc     *prpc.Client
-	cache    *cache.Cache
-	firebase *internal.FirebaseService
+	config       *config.Config
+	prpc         *prpc.Client
+	cache        *cache.Cache
+	firebase     *internal.FirebaseService
+	geminiClient *gemini.Client
 }
 
 // NewHandler creates a new handler instance
 func NewHandler(cfg *config.Config) *Handler {
 	firebase, _ := internal.NewFirebaseService(cfg) // Ignore error for now
+
+	geminiClient, err := gemini.NewClient(cfg.GeminiAPIKey)
+	if err != nil {
+		logrus.Warnf("Failed to create Gemini client, AI features will be disabled: %v", err)
+	}
+
 	return &Handler{
-		config:   cfg,
-		prpc:     prpc.NewClient(cfg),
-		cache:    cache.NewCache(cfg),
-		firebase: firebase,
+		config:       cfg,
+		prpc:         prpc.NewClient(cfg),
+		cache:        cache.NewCache(cfg),
+		firebase:     firebase,
+		geminiClient: geminiClient,
 	}
 }
 
@@ -78,6 +87,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 		// Analytics
 		v1.GET("/analytics", h.GetAnalytics)
+		v1.GET("/ai/network-summary", h.GetIntelligentNetworkSummary)
 
 		// Historical pNodes
 		v1.GET("/pnodes/historical", h.GetHistoricalPNodes)
@@ -1107,4 +1117,91 @@ func (h *Handler) readCSVFile(filename string) ([][]string, error) {
 	}
 
 	return rows, nil
+}
+
+// GetIntelligentNetworkSummary returns an AI-generated summary of the network
+func (h *Handler) GetIntelligentNetworkSummary(c *gin.Context) {
+	if h.geminiClient == nil {
+		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+			Error: "The AI service is not configured on the backend.",
+		})
+		return
+	}
+
+	// Get all nodes
+	allNodes, err := h.getGlobalPNodes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch node data for analysis.",
+		})
+		return
+	}
+
+	// Aggregate data
+	totalNodes := len(allNodes)
+	activeNodes := 0
+	registeredNodes := 0
+	var totalLatency int
+	var validLatencyCount int
+	var totalUptime float64
+	versionCounts := make(map[string]int)
+	regionCounts := make(map[string]int)
+
+	for _, node := range allNodes {
+		if node.Status == "active" {
+			activeNodes++
+		}
+		if node.Registered {
+			registeredNodes++
+		}
+		if node.Latency > 0 {
+			totalLatency += node.Latency
+			validLatencyCount++
+		}
+		totalUptime += node.Uptime
+		versionCounts[node.Version]++
+		regionCounts[node.Region]++
+	}
+
+	avgLatency := 0.0
+	if validLatencyCount > 0 {
+		avgLatency = float64(totalLatency) / float64(validLatencyCount)
+	}
+	avgUptime := 0.0
+	if totalNodes > 0 {
+		avgUptime = totalUptime / float64(totalNodes)
+	}
+
+	// Create a summary string for the prompt
+	var summaryBuilder strings.Builder
+	summaryBuilder.WriteString(fmt.Sprintf("Total Nodes: %d\n", totalNodes))
+	summaryBuilder.WriteString(fmt.Sprintf("Active Nodes: %d (%.1f%%)\n", activeNodes, float64(activeNodes)/float64(totalNodes)*100))
+	summaryBuilder.WriteString(fmt.Sprintf("Registered Nodes: %d (%.1f%%)\n", registeredNodes, float64(registeredNodes)/float64(totalNodes)*100))
+	summaryBuilder.WriteString(fmt.Sprintf("Average Latency: %.2f ms\n", avgLatency))
+	summaryBuilder.WriteString(fmt.Sprintf("Average Uptime: %.2f%%\n", avgUptime))
+
+	summaryBuilder.WriteString("\nVersion Distribution:\n")
+	for version, count := range versionCounts {
+		summaryBuilder.WriteString(fmt.Sprintf("- %s: %d nodes (%.1f%%)\n", version, count, float64(count)/float64(totalNodes)*100))
+	}
+
+	summaryBuilder.WriteString("\nRegion Distribution:\n")
+	for region, count := range regionCounts {
+		summaryBuilder.WriteString(fmt.Sprintf("- %s: %d nodes (%.1f%%)\n", region, count, float64(count)/float64(totalNodes)*100))
+	}
+
+	// Generate summary with Gemini
+	summary, err := h.geminiClient.GenerateNetworkSummary(summaryBuilder.String())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: fmt.Sprintf("Failed to generate AI summary: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Data: map[string]string{
+			"summary": summary,
+		},
+	})
 }

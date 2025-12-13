@@ -263,7 +263,7 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 					// New fields from rich API - not available in basic PodsResponse
 					IsPublic:            false,     // Default
 					RpcPort:             6000,      // Default
-					Version:             "unknown", // Default
+					Version:             pod.Version,
 					StorageUsagePercent: 0,         // Default
 				}
 
@@ -413,6 +413,13 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 		Stake:           stake,
 		RiskScore:       riskScore,
 		XDNScore:        calculateXDNScore(stake, uptimePercentage, latency, riskScore),
+		Version:         targetPod.Version,
+		// Stats from GetStats()
+		CPUPercent:  stats.CPUPercent,
+		MemoryUsed:  stats.RAMUsed,
+		MemoryTotal: stats.RAMTotal,
+		PacketsIn:   stats.PacketsReceived,
+		PacketsOut:  stats.PacketsSent,
 	}
 
 	logrus.Debugf("Fetched real pNode %s from pRPC", id)
