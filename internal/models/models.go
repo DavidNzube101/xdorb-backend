@@ -22,6 +22,7 @@ type PNode struct {
 	Stake           float64   `json:"stake"`
 	RiskScore       float64   `json:"riskScore"`
 	XDNScore        float64   `json:"xdnScore"` // Xandeum Node Score
+	Registered      bool      `json:"registered"`
 	// New fields from rich API
 	IsPublic            bool    `json:"isPublic"`
 	RpcPort             int     `json:"rpcPort"`

@@ -62,7 +62,6 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 		v1.GET("/pnodes", h.GetPNodes)
 		v1.POST("/pnodes/refresh", h.RefreshCache)
 		v1.GET("/pnodes/:id", h.GetPNodeByID)
-		v1.GET("/pnodes/:id/registered", h.CheckPNodeRegistered)
 		v1.GET("/pnodes/:id/history", h.GetPNodeHistory)
 		v1.GET("/pnodes/:id/peers", h.GetPNodePeers)
 		v1.GET("/pnodes/:id/alerts", h.GetPNodeAlerts)
@@ -284,6 +283,13 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 		return
 	}
 
+	// Get the set of registered pNodes
+	registeredPNodes, err := h.getRegisteredPNodesSet()
+	if err != nil {
+		logrus.Error("Failed to get registered pNodes set:", err)
+		// Continue without registration data if there's an error
+	}
+
 	// Filter in-memory
 	var filtered []models.PNode
 	for _, node := range allNodes {
@@ -302,7 +308,16 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 				continue
 			}
 		}
-		filtered = append(filtered, node)
+
+		// Create a mutable copy and enrich with registration status
+		enrichedNode := node
+		if _, ok := registeredPNodes[enrichedNode.ID]; ok {
+			enrichedNode.Registered = true
+		} else {
+			enrichedNode.Registered = false
+		}
+
+		filtered = append(filtered, enrichedNode)
 	}
 
 	// Pagination
@@ -945,8 +960,8 @@ func (h *Handler) GetPrices(c *gin.Context) {
 		}
 	}
 
-	// Cache the result (5 minutes)
-	if err := h.cache.Set(cacheKey, prices, 5*time.Minute); err != nil {
+	// Cache the result
+	if err := h.cache.Set(cacheKey, prices, h.config.PriceCacheTTL); err != nil {
 		logrus.Warn("Failed to cache prices:", err)
 	}
 
@@ -1017,45 +1032,39 @@ func (h *Handler) GetHistoricalPNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
 }
 
-// CheckPNodeRegistered checks if a pNode is registered by looking up its pubkey in the CSV file
-func (h *Handler) CheckPNodeRegistered(c *gin.Context) {
-	id := c.Param("id")
+// getRegisteredPNodesSet reads the CSV file and returns a set of registered pubkeys for efficient lookup
+func (h *Handler) getRegisteredPNodesSet() (map[string]bool, error) {
+	cacheKey := "pnodes:registered_set"
 
-	// The ID is the pubkey, so we can check directly against the CSV
-	registered, err := h.isPNodeRegistered(id)
-	if err != nil {
-		logrus.Error("Failed to check pNode registration:", err)
-		c.JSON(http.StatusInternalServerError, models.APIResponse{
-			Error: "Failed to check registration status",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, models.APIResponse{Data: map[string]bool{
-		"registered": registered,
-	}})
-}
-
-// isPNodeRegistered checks if a pubkey exists in the registered pNodes CSV
-func (h *Handler) isPNodeRegistered(pubkey string) (bool, error) {
-	if pubkey == "" {
-		return false, nil
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var registeredSet map[string]bool
+		if err := cached.Unmarshal(&registeredSet); err == nil {
+			return registeredSet, nil
+		}
 	}
 
 	// Read the CSV file
 	file, err := h.readCSVFile("pnodes-data-2025-12-11.csv")
 	if err != nil {
-		return false, fmt.Errorf("failed to read CSV file: %w", err)
+		return nil, fmt.Errorf("failed to read CSV file: %w", err)
 	}
 
+	registeredSet := make(map[string]bool)
 	// Check if pubkey exists in the CSV (column index 1 is "pNode Identity Pubkey")
 	for _, row := range file {
-		if len(row) > 1 && strings.TrimSpace(row[1]) == pubkey {
-			return true, nil
+		if len(row) > 1 && strings.TrimSpace(row[1]) != "" {
+			pubkey := strings.TrimSpace(row[1])
+			registeredSet[pubkey] = true
 		}
 	}
 
-	return false, nil
+	// Cache the result for 24 hours
+	if err := h.cache.Set(cacheKey, registeredSet, 24*time.Hour); err != nil {
+		logrus.Warn("Failed to cache registered pNodes set:", err)
+	}
+
+	return registeredSet, nil
 }
 
 // readCSVFile reads a CSV file and returns the rows as slices of strings

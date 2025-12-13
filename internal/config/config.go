@@ -39,6 +39,7 @@ type Config struct {
 	PNodeCacheTTL   time.Duration
 	StatsCacheTTL   time.Duration
 	HistoryCacheTTL time.Duration
+	PriceCacheTTL   time.Duration
 
 	// Rate limiting
 	RateLimitRPM int
@@ -92,6 +93,7 @@ func Load() *Config {
 		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 2*time.Minute),
 		StatsCacheTTL:   getEnvAsDuration("STATS_CACHE_TTL", 5*time.Minute),
 		HistoryCacheTTL: getEnvAsDuration("HISTORY_CACHE_TTL", time.Hour),
+		PriceCacheTTL:   getEnvAsDuration("PRICE_CACHE_TTL", 30*time.Minute),
 
 		RateLimitRPM: getEnvAsInt("RATE_LIMIT_RPM", 100),
 	}
