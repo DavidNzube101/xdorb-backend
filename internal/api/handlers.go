@@ -74,6 +74,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 		v1.GET("/pnodes/:id/history", h.GetPNodeHistory)
 		v1.GET("/pnodes/:id/peers", h.GetPNodePeers)
 		v1.GET("/pnodes/:id/alerts", h.GetPNodeAlerts)
+		v1.GET("/pnodes/:id/registration", h.GetRegistrationInfo)
 
 		// Leaderboard
 		v1.GET("/leaderboard", h.GetLeaderboard)
@@ -1242,4 +1243,39 @@ func (h *Handler) IntelligentNodeComparison(c *gin.Context) {
 			"comparison": comparison,
 		},
 	})
+}
+
+func (h *Handler) GetRegistrationInfo(c *gin.Context) {
+    id := c.Param("id")
+    if id == "" {
+        c.JSON(http.StatusBadRequest, models.APIResponse{
+            Error: "pNode ID is required",
+        })
+        return
+    }
+
+    records, err := h.readCSVFile("pnodes-data-2025-12-11.csv")
+    if err != nil {
+        logrus.Error("Failed to read registration CSV file:", err)
+        c.JSON(http.StatusInternalServerError, models.APIResponse{
+            Error: "Could not read registration data.",
+        })
+        return
+    }
+
+    for i, row := range records {
+        if i == 0 { continue }
+        if len(row) > 3 && strings.TrimSpace(row[1]) == id {
+            c.JSON(http.StatusOK, models.APIResponse{
+                Data: map[string]string{
+                    "registeredTime": strings.TrimSpace(row[3]),
+                },
+            })
+            return
+        }
+    }
+
+    c.JSON(http.StatusNotFound, models.APIResponse{
+        Error: "Registration information not found for this node.",
+    })
 }
