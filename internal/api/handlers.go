@@ -88,6 +88,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 		// Analytics
 		v1.GET("/analytics", h.GetAnalytics)
 		v1.GET("/ai/network-summary", h.GetIntelligentNetworkSummary)
+		v1.POST("/ai/compare-nodes", h.IntelligentNodeComparison)
 
 		// Historical pNodes
 		v1.GET("/pnodes/historical", h.GetHistoricalPNodes)
@@ -1102,7 +1103,8 @@ func (h *Handler) readCSVFile(filename string) ([][]string, error) {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	rows, err := reader.ReadAll()
+
+rows, err := reader.ReadAll()
 	if err != nil {
 		return nil, err
 	}
@@ -1193,6 +1195,50 @@ func (h *Handler) GetIntelligentNetworkSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{
 		Data: map[string]string{
 			"summary": summary,
+		},
+	})
+}
+
+// IntelligentNodeComparison handles the AI-powered comparison of two nodes
+func (h *Handler) IntelligentNodeComparison(c *gin.Context) {
+	if h.geminiClient == nil {
+		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+			Error: "The AI service is not configured on the backend.",
+		})
+		return
+	}
+
+	var requestBody struct {
+		Node1 *models.PNode `json:"node1"`
+		Node2 *models.PNode `json:"node2"`
+	}
+
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Error: "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	if requestBody.Node1 == nil || requestBody.Node2 == nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Error: "Request body must contain two nodes: 'node1' and 'node2'",
+		})
+		return
+	}
+
+	// Generate comparison with Gemini
+	comparison, err := h.geminiClient.GenerateNodeComparison(requestBody.Node1, requestBody.Node2)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: fmt.Sprintf("Failed to generate AI comparison: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Data: map[string]string{
+			"comparison": comparison,
 		},
 	})
 }
