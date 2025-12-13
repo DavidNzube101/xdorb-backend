@@ -397,61 +397,52 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 		// Continue without registration data if there's an error
 	}
 
-	// Define a function to enrich a node with registration status
-	enrichNode := func(node *models.PNode) *models.PNode {
-		if node == nil {
-			return nil
-		}
-		if _, ok := registeredPNodes[node.ID]; ok {
-			node.Registered = true
-		} else {
-			node.Registered = false
-		}
-		return node
-	}
-
-	// 1. Try to find in global list first (fastest and most consistent)
-	if allNodes, err := h.getGlobalPNodes(); err == nil {
-		for _, node := range allNodes {
-			if node.ID == id {
-				enriched := enrichNode(&node)
-				c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
-				return
-			}
-		}
-	}
-
-	// 2. If not in global list, try specific cache key
-	cacheKey := "pnode:" + id
-	if cached, err := h.cache.Get(cacheKey); err == nil {
-		var pnode models.PNode
-		if err := cached.Unmarshal(&pnode); err == nil {
-			logrus.Debug("Serving pNode from cache")
-			enriched := enrichNode(&pnode)
-			c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
-			return
-		}
-	}
-
-	// 3. Fetch from pRPC (fallback for nodes not in main list?)
+	// 1. Fetch directly from pRPC to get the full, detailed object
 	pnode, err := h.prpc.GetPNodeByID(id)
 	if err != nil {
-		logrus.Error("Failed to get pNode:", err)
+		// If the node is not found via direct pRPC, then check the historical/cached list as a fallback.
+		// This handles cases where a node might be temporarily offline but we still have some data.
+		if allNodes, cacheErr := h.getGlobalPNodes(); cacheErr == nil {
+			for _, node := range allNodes {
+				if node.ID == id {
+					enriched := enrichNode(&node, registeredPNodes)
+					c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
+					return
+				}
+			}
+		}
+
+		// If not found anywhere, return the original error
+		logrus.Error("Failed to get pNode by ID from pRPC and not found in cache: ", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
 			Error: "Failed to fetch pNode details",
 		})
 		return
 	}
 
-	// Enrich before caching and responding
-	enriched := enrichNode(pnode)
+	// 2. Enrich the fresh data with registration status
+	enriched := enrichNode(pnode, registeredPNodes)
 
-	// Cache the result
+	// 3. Cache the full, enriched result for this specific node
+	cacheKey := "pnode:" + id
 	if err := h.cache.Set(cacheKey, enriched, h.config.PNodeCacheTTL); err != nil {
-		logrus.Warn("Failed to cache pNode:", err)
+		logrus.Warn("Failed to cache detailed pNode:", err)
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
+}
+
+// enrichNode is a helper to add registration status to a node
+func enrichNode(node *models.PNode, registeredPNodes map[string]bool) *models.PNode {
+	if node == nil {
+		return nil
+	}
+	if _, ok := registeredPNodes[node.ID]; ok {
+		node.Registered = true
+	} else {
+		node.Registered = false
+	}
+	return node
 }
 
 // GetPNodeHistory returns historical metrics for a pNode
