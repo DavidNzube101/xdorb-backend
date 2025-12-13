@@ -228,7 +228,7 @@ func (h *Handler) GetDashboardStats(c *gin.Context) {
 
 // Helper to get global pNode list (cached or fresh)
 func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
-	cacheKey := "pnodes:global_list"
+	cacheKey := "pnodes:global_list_enriched" // Use a new key for the enriched data
 
 	// Try cache first
 	if cached, err := h.cache.Get(cacheKey); err == nil {
@@ -242,6 +242,22 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 	pnodes, err := h.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000})
 	if err != nil {
 		return nil, err
+	}
+
+	// Get the set of registered pNodes to enrich the list
+	registeredPNodes, err := h.getRegisteredPNodesSet()
+	if err != nil {
+		logrus.Error("Failed to get registered pNodes set for global list, enrichment will be incomplete:", err)
+		// Continue without registration data if there's an error, but log it
+	}
+
+	// Enrich the nodes with the registration status
+	for i := range pnodes {
+		if _, ok := registeredPNodes[pnodes[i].ID]; ok {
+			pnodes[i].Registered = true
+		} else {
+			pnodes[i].Registered = false
+		}
 	}
 
 	// Save to Firebase concurrently
@@ -260,9 +276,9 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 		}
 	}()
 
-	// Cache the global list
+	// Cache the enriched global list
 	if err := h.cache.Set(cacheKey, pnodes, h.config.PNodeCacheTTL); err != nil {
-		logrus.Warn("Failed to cache global pNode list:", err)
+		logrus.Warn("Failed to cache enriched global pNode list:", err)
 	}
 
 	return pnodes, nil
@@ -284,7 +300,7 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 		limit = 50
 	}
 
-	// Get all nodes (from cache or pRPC)
+	// Get all nodes (from cache or pRPC, now pre-enriched)
 	allNodes, err := h.getGlobalPNodes()
 	if err != nil {
 		logrus.Error("Failed to get pNodes:", err)
@@ -292,13 +308,6 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 			Error: "Failed to fetch pNodes",
 		})
 		return
-	}
-
-	// Get the set of registered pNodes
-	registeredPNodes, err := h.getRegisteredPNodesSet()
-	if err != nil {
-		logrus.Error("Failed to get registered pNodes set:", err)
-		// Continue without registration data if there's an error
 	}
 
 	// Filter in-memory
@@ -320,15 +329,7 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 			}
 		}
 
-		// Create a mutable copy and enrich with registration status
-		enrichedNode := node
-		if _, ok := registeredPNodes[enrichedNode.ID]; ok {
-			enrichedNode.Registered = true
-		} else {
-			enrichedNode.Registered = false
-		}
-
-		filtered = append(filtered, enrichedNode)
+		filtered = append(filtered, node)
 	}
 
 	// Pagination
