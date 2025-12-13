@@ -380,11 +380,32 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 		return
 	}
 
+	// Get the set of registered pNodes to enrich the response
+	registeredPNodes, err := h.getRegisteredPNodesSet()
+	if err != nil {
+		logrus.Error("Failed to get registered pNodes set for detail view:", err)
+		// Continue without registration data if there's an error
+	}
+
+	// Define a function to enrich a node with registration status
+	enrichNode := func(node *models.PNode) *models.PNode {
+		if node == nil {
+			return nil
+		}
+		if _, ok := registeredPNodes[node.ID]; ok {
+			node.Registered = true
+		} else {
+			node.Registered = false
+		}
+		return node
+	}
+
 	// 1. Try to find in global list first (fastest and most consistent)
 	if allNodes, err := h.getGlobalPNodes(); err == nil {
 		for _, node := range allNodes {
 			if node.ID == id {
-				c.JSON(http.StatusOK, models.APIResponse{Data: node})
+				enriched := enrichNode(&node)
+				c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
 				return
 			}
 		}
@@ -396,7 +417,8 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 		var pnode models.PNode
 		if err := cached.Unmarshal(&pnode); err == nil {
 			logrus.Debug("Serving pNode from cache")
-			c.JSON(http.StatusOK, models.APIResponse{Data: pnode})
+			enriched := enrichNode(&pnode)
+			c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
 			return
 		}
 	}
@@ -411,12 +433,15 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 		return
 	}
 
+	// Enrich before caching and responding
+	enriched := enrichNode(pnode)
+
 	// Cache the result
-	if err := h.cache.Set(cacheKey, pnode, h.config.PNodeCacheTTL); err != nil {
+	if err := h.cache.Set(cacheKey, enriched, h.config.PNodeCacheTTL); err != nil {
 		logrus.Warn("Failed to cache pNode:", err)
 	}
 
-	c.JSON(http.StatusOK, models.APIResponse{Data: pnode})
+	c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
 }
 
 // GetPNodeHistory returns historical metrics for a pNode
