@@ -1106,7 +1106,7 @@ func (h *Handler) readCSVFile(filename string) ([][]string, error) {
 
 	reader := csv.NewReader(file)
 
-rows, err := reader.ReadAll()
+	rows, err := reader.ReadAll()
 	if err != nil {
 		return nil, err
 	}
@@ -1246,36 +1246,50 @@ func (h *Handler) IntelligentNodeComparison(c *gin.Context) {
 }
 
 func (h *Handler) GetRegistrationInfo(c *gin.Context) {
-    id := c.Param("id")
-    if id == "" {
-        c.JSON(http.StatusBadRequest, models.APIResponse{
-            Error: "pNode ID is required",
-        })
-        return
-    }
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Error: "pNode ID is required",
+		})
+		return
+	}
 
-    records, err := h.readCSVFile("pnodes-data-2025-12-11.csv")
-    if err != nil {
-        logrus.Error("Failed to read registration CSV file:", err)
-        c.JSON(http.StatusInternalServerError, models.APIResponse{
-            Error: "Could not read registration data.",
-        })
-        return
-    }
+	records, err := h.readCSVFile("pnodes-data-2025-12-11.csv")
+	if err != nil {
+		logrus.Error("Failed to read registration CSV file:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Could not read registration data.",
+		})
+		return
+	}
 
-    for i, row := range records {
-        if i == 0 { continue }
-        if len(row) > 3 && strings.TrimSpace(row[1]) == id {
-            c.JSON(http.StatusOK, models.APIResponse{
-                Data: map[string]string{
-                    "registeredTime": strings.TrimSpace(row[3]),
-                },
-            })
-            return
-        }
-    }
+	for i, row := range records {
+		if i == 0 {
+			continue
+		}
+		if len(row) > 3 && strings.TrimSpace(row[1]) == id {
+			registeredTime := strings.TrimSpace(row[3])
+			parts := strings.Split(registeredTime, ", ")
+			registrationDate := ""
+			registrationTime := ""
+			if len(parts) == 2 {
+				registrationDate = parts[0]
+				registrationTime = parts[1]
+			} else {
+				registrationDate = registeredTime
+				registrationTime = ""
+			}
+			c.JSON(http.StatusOK, models.APIResponse{
+				Data: map[string]string{
+					"registrationDate": registrationDate,
+					"registrationTime": registrationTime,
+				},
+			})
+			return
+		}
+	}
 
-    c.JSON(http.StatusNotFound, models.APIResponse{
-        Error: "Registration information not found for this node.",
-    })
+	c.JSON(http.StatusNotFound, models.APIResponse{
+		Error: "Registration information not found for this node.",
+	})
 }
