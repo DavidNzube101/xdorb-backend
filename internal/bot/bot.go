@@ -399,14 +399,20 @@ I provide real-time analytics for Xandeum pNodes. Here's what I can do:
 • Get detailed information about specific pNodes
 • Check XDN Scores with formula breakdown
 • Explore historical pNodes in the catacombs
+• Search pNodes by region
+• Get network overview and AI insights
 
 *Available Commands:*
-/list_pnodes [limit] - List top pNodes (default 10)
-/pnode <id> - Get detailed pNode info
-/xdn_score <id> - Quick XDN Score view
-/leaderboard [limit] - Top pNodes leaderboard
-/catacombs [limit] - View historical pNodes
+/start - Welcome message and overview
 /help - Show this help message
+/list_pnodes [limit] - List top pNodes by XDN Score (default 10, max 20)
+/pnode <id> - Get detailed information about a specific pNode
+/xdn_score <id> - Quick view of XDN Score with formula breakdown
+/leaderboard [limit] - Show top pNodes leaderboard (alias for /list_pnodes)
+/network - Show network overview statistics
+/search <region> - Find pNodes in a specific region
+/ai_summary [pnode_id] - Get AI-powered insights (network or specific pNode)
+/catacombs [limit] - View historical pNodes from the catacombs (default 10, max 20)
 
 _Data is fetched live from the Xandeum network._`
 }
@@ -618,6 +624,9 @@ func (b *Bot) handleXDNScore(text string) string {
 		riskComponent = 0
 	}
 
+	// Calculate total score
+	totalScore := stakeComponent + uptimeComponent + latencyComponent + riskComponent
+
 	response := fmt.Sprintf(`🎯 *XDN Score for pNode %s*
 
 *Total Score: %.1f*
@@ -630,7 +639,7 @@ func (b *Bot) handleXDNScore(text string) string {
 
 *Formula:* (stake × 0.4) + (uptime × 0.3) + ((100 - latency) × 0.2) + ((100 - risk) × 0.1)`,
 		pnode.ID,
-		pnode.XDNScore,
+		totalScore,
 		pnode.Stake, stakeComponent,
 		pnode.Uptime, uptimeComponent,
 		pnode.Latency, latencyComponent,
