@@ -1,8 +1,12 @@
 package bot
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -18,10 +22,11 @@ import (
 
 // Bot represents the Telegram bot
 type Bot struct {
-	bot      *tgbotapi.BotAPI
-	config   *config.Config
-	prpc     *prpc.Client
-	firebase *internal.FirebaseService
+	bot        *tgbotapi.BotAPI
+	config     *config.Config
+	prpc       *prpc.Client
+	firebase   *internal.FirebaseService
+	httpClient *http.Client
 }
 
 // NewBot creates a new Telegram bot instance
@@ -65,10 +70,11 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 	}
 
 	return &Bot{
-		bot:      bot,
-		config:   cfg,
-		prpc:     prpc.NewClient(cfg),
-		firebase: firebase,
+		bot:        bot,
+		config:     cfg,
+		prpc:       prpc.NewClient(cfg),
+		firebase:   firebase,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
 
@@ -140,6 +146,249 @@ func (b *Bot) sendMessage(chatID int64, text string) {
 	}
 }
 
+// API helper methods to align with backend
+
+func (b *Bot) apiGetPNodes(limit int) ([]models.PNode, error) {
+	url := fmt.Sprintf("%s/api/pnodes?limit=%d", b.config.BackendURL, limit)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp struct {
+		Data  []models.PNode `json:"data"`
+		Error string         `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Error != "" {
+		return nil, fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data, nil
+}
+
+func (b *Bot) apiGetPNodeByID(id string) (*models.PNode, error) {
+	url := fmt.Sprintf("%s/api/pnodes/%s", b.config.BackendURL, id)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp struct {
+		Data  *models.PNode `json:"data"`
+		Error string        `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Error != "" {
+		return nil, fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data, nil
+}
+
+func (b *Bot) apiGetDashboardStats() (*models.DashboardStats, error) {
+	url := fmt.Sprintf("%s/api/dashboard/stats", b.config.BackendURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp struct {
+		Data  *models.DashboardStats `json:"data"`
+		Error string                 `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Error != "" {
+		return nil, fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data, nil
+}
+
+func (b *Bot) apiGetPNodeHistory(id, timeRange string, simulated bool) ([]models.PNodeHistory, error) {
+	url := fmt.Sprintf("%s/api/pnodes/%s/history?range=%s&simulated=%t", b.config.BackendURL, id, timeRange, simulated)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp struct {
+		Data  []models.PNodeHistory `json:"data"`
+		Error string                `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Error != "" {
+		return nil, fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data, nil
+}
+
+func (b *Bot) apiGetRegistrationInfo(id string) (map[string]string, error) {
+	url := fmt.Sprintf("%s/api/pnodes/%s/registration", b.config.BackendURL, id)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp struct {
+		Data  map[string]string `json:"data"`
+		Error string            `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Error != "" {
+		return nil, fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data, nil
+}
+
+func (b *Bot) apiCompareNodes(node1, node2 *models.PNode) (string, error) {
+	url := fmt.Sprintf("%s/api/ai/compare-nodes", b.config.BackendURL)
+	payload := map[string]interface{}{
+		"node1": node1,
+		"node2": node2,
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var apiResp struct {
+		Data  map[string]string `json:"data"`
+		Error string            `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", err
+	}
+	if apiResp.Error != "" {
+		return "", fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data["comparison"], nil
+}
+
+func (b *Bot) apiGetNetworkSummary() (string, error) {
+	url := fmt.Sprintf("%s/api/ai/network-summary", b.config.BackendURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var apiResp struct {
+		Data  map[string]string `json:"data"`
+		Error string            `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", err
+	}
+	if apiResp.Error != "" {
+		return "", fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data["summary"], nil
+}
+
 // handleStart returns the welcome message
 func (b *Bot) handleStart() string {
 	return `🤖 *Welcome to XDOrb Analytics Bot!*
@@ -205,7 +454,7 @@ func (b *Bot) handleListPNodes(text string) string {
 	}
 
 	// Get all pNodes to calculate leaderboard
-	allNodes, err := b.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000})
+	allNodes, err := b.apiGetPNodes(1000)
 	if err != nil {
 		logrus.Errorf("Failed to get pNodes: %v", err)
 		return "❌ Failed to fetch pNode data. Please try again later."
@@ -281,14 +530,23 @@ func (b *Bot) handlePNode(text string) string {
 	id := parts[1]
 
 	// Get pNode data
-	pnode, err := b.prpc.GetPNodeByID(id)
+	pnode, err := b.apiGetPNodeByID(id)
 	if err != nil {
 		logrus.Errorf("Failed to get pNode %s: %v", id, err)
 		return fmt.Sprintf("❌ Failed to fetch data for pNode %s. Please check the ID and try again.", id)
 	}
 
-	if pnode.ID == "" {
+	if pnode == nil || pnode.ID == "" {
 		return fmt.Sprintf("❌ pNode %s not found in the network.", id)
+	}
+
+	// Get registration info
+	regInfo, regErr := b.apiGetRegistrationInfo(id)
+	registrationText := ""
+	if regErr == nil && regInfo != nil {
+		registrationText = fmt.Sprintf("\n• *Registration Date:* %s\n• *Registration Time:* %s", regInfo["registrationDate"], regInfo["registrationTime"])
+	} else {
+		registrationText = "\n• *Registration:* Not available"
 	}
 
 	status := getStatusEmoji(pnode.Status)
@@ -308,7 +566,7 @@ func (b *Bot) handlePNode(text string) string {
 • *Location:* %s
 • *Region:* %s
 • *Storage:* %s / %s
-• *Last Seen:* %s
+• *Last Seen:* %s%s
 
 _XDN Formula: (stake × 0.4) + (uptime × 0.3) + ((100 - latency) × 0.2) + ((100 - risk) × 0.1)_`,
 		pnode.ID,
@@ -322,7 +580,8 @@ _XDN Formula: (stake × 0.4) + (uptime × 0.3) + ((100 - latency) × 0.2) + ((10
 		pnode.Region,
 		formatBytes(pnode.StorageUsed),
 		formatBytes(pnode.StorageCapacity),
-		pnode.LastSeen.Format("2006-01-02 15:04:05 UTC"))
+		pnode.LastSeen.Format("2006-01-02 15:04:05 UTC"),
+		registrationText)
 
 	return response
 }
@@ -337,13 +596,13 @@ func (b *Bot) handleXDNScore(text string) string {
 	id := parts[1]
 
 	// Get pNode data
-	pnode, err := b.prpc.GetPNodeByID(id)
+	pnode, err := b.apiGetPNodeByID(id)
 	if err != nil {
 		logrus.Errorf("Failed to get pNode %s: %v", id, err)
 		return fmt.Sprintf("❌ Failed to fetch data for pNode %s. Please check the ID and try again.", id)
 	}
 
-	if pnode.ID == "" {
+	if pnode == nil || pnode.ID == "" {
 		return fmt.Sprintf("❌ pNode %s not found in the network.", id)
 	}
 
@@ -388,7 +647,7 @@ func (b *Bot) handleLeaderboard(text string) string {
 // handleNetwork handles the /network command
 func (b *Bot) handleNetwork() string {
 	// Get dashboard stats for network overview
-	stats, err := b.prpc.GetDashboardStats()
+	stats, err := b.apiGetDashboardStats()
 	if err != nil {
 		logrus.Errorf("Failed to get dashboard stats: %v", err)
 		return "❌ Failed to fetch network statistics. Please try again later."
@@ -427,7 +686,7 @@ func (b *Bot) handleSearch(text string) string {
 	region := strings.Join(parts[1:], " ")
 
 	// Get all pNodes and filter by region
-	allNodes, err := b.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 1000})
+	allNodes, err := b.apiGetPNodes(1000)
 	if err != nil {
 		logrus.Errorf("Failed to get pNodes for search: %v", err)
 		return "❌ Failed to search pNodes. Please try again later."
@@ -488,88 +747,42 @@ func (b *Bot) handleAISummary(text string) string {
 
 // handleAISummaryNetwork handles network-wide AI analysis
 func (b *Bot) handleAISummaryNetwork() string {
-	// Get network stats for AI analysis
-	stats, err := b.prpc.GetDashboardStats()
-	if err != nil {
-		logrus.Errorf("Failed to get dashboard stats for AI: %v", err)
-		return "❌ Failed to fetch network data for AI analysis. Please try again later."
-	}
-
-	// Get top pNodes for analysis
-	leaderboard, err := b.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 50})
-	if err != nil {
-		logrus.Errorf("Failed to get pNodes for AI: %v", err)
-		return "❌ Failed to fetch pNode data for AI analysis. Please try again later."
-	}
-
-	// Calculate XDN scores for analysis
-	for i := range leaderboard {
-		stake := leaderboard[i].Stake
-		uptime := leaderboard[i].Uptime
-		latency := leaderboard[i].Latency
-		riskScore := leaderboard[i].RiskScore
-
-		latencyScore := 100.0 - float64(latency)
-		if latencyScore < 0 {
-			latencyScore = 0
-		}
-
-		riskScoreNormalized := 100.0 - riskScore
-		if riskScoreNormalized < 0 {
-			riskScoreNormalized = 0
-		}
-
-		leaderboard[i].XDNScore = (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
-	}
-
-	// Sort by XDN score
-	for i := 0; i < len(leaderboard)-1; i++ {
-		for j := i + 1; j < len(leaderboard); j++ {
-			if leaderboard[i].XDNScore < leaderboard[j].XDNScore {
-				leaderboard[i], leaderboard[j] = leaderboard[j], leaderboard[i]
-			}
-		}
-	}
-
-	// Prepare data for AI analysis
-	analysisData := map[string]interface{}{
-		"networkStats": stats,
-		"topNodes":     leaderboard[:min(10, len(leaderboard))],
-		"totalNodes":   len(leaderboard),
-	}
-
-	// Call AI service (placeholder - you'll need to implement Gemini integration)
-	aiResponse, err := b.generateAIInsights(analysisData)
+	// Call AI service via backend
+	aiResponse, err := b.apiGetNetworkSummary()
 	if err != nil {
 		logrus.Errorf("Failed to generate AI insights: %v", err)
 		return "❌ AI analysis temporarily unavailable. Please try again later."
 	}
 
-	return aiResponse
+	return fmt.Sprintf(`🤖 *AI Network Analysis*
+
+%s
+
+_Analysis based on real-time network data_`, aiResponse)
 }
 
 // handleAISummaryForPNode handles AI analysis for a specific pNode
 func (b *Bot) handleAISummaryForPNode(pnodeID string) string {
 	// Get pNode data
-	pnode, err := b.prpc.GetPNodeByID(pnodeID)
+	pnode, err := b.apiGetPNodeByID(pnodeID)
 	if err != nil {
 		logrus.Errorf("Failed to get pNode %s for AI: %v", pnodeID, err)
 		return fmt.Sprintf("❌ Failed to fetch data for pNode %s. Please check the ID and try again.", pnodeID)
 	}
 
-	if pnode.ID == "" {
+	if pnode == nil || pnode.ID == "" {
 		return fmt.Sprintf("❌ pNode %s not found in the network.", pnodeID)
 	}
 
 	// Get pNode history for trend analysis
-	history, err := b.prpc.GetPNodeHistory(pnodeID, "24h", false)
+	history, err := b.apiGetPNodeHistory(pnodeID, "24h", false)
 	if err != nil {
 		logrus.Warnf("Failed to get history for pNode %s: %v", pnodeID, err)
 		history = []models.PNodeHistory{} // Empty history is ok
 	}
 
 	// Get some network context (top 5 nodes for comparison)
-	networkNodes, err := b.prpc.GetPNodes(&prpc.PNodeFilters{Limit: 10})
+	networkNodes, err := b.apiGetPNodes(10)
 	if err != nil {
 		logrus.Warnf("Failed to get network nodes for comparison: %v", err)
 		networkNodes = []models.PNode{}

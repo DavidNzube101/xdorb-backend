@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -27,6 +28,8 @@ type Config struct {
 	// Telegram Bot
 	TelegramBotToken      string
 	TelegramAdminPassword string
+	BotAPIKey             string
+	BackendURL            string
 	GeminiAPIKey          string
 	JupiterAPIKey         string
 
@@ -83,6 +86,8 @@ func Load() *Config {
 		PRPCTimeout:           getEnvAsDuration("PRPC_TIMEOUT", 10*time.Second),
 		TelegramBotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
 		TelegramAdminPassword: getEnv("TELEGRAM_ADMIN_PASSWORD", ""),
+		BotAPIKey:             getEnv("BOT_COMMUNICATION_API_KEY", ""),
+		BackendURL:            getEnv("BACKEND_URL", fmt.Sprintf("http://localhost:%d", getEnvAsInt("PORT", 8080))),
 		GeminiAPIKey:          getEnv("GEMINI_API_KEY", ""),
 		JupiterAPIKey:         getEnv("JUPITER_API_KEY", ""),
 
