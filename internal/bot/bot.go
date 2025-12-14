@@ -58,6 +58,7 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 		{Command: "network", Description: "Show network overview"},
 		{Command: "search", Description: "Find pNodes by region"},
 		{Command: "ai_summary", Description: "Get AI-powered insights (network or specific pNode)"},
+		{Command: "compare", Description: "Compare two pNodes (add 'smart' for AI analysis)"},
 		{Command: "catacombs", Description: "View historical pNodes (resting in peace)"},
 	}
 
@@ -124,6 +125,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		response = b.handleSearch(text)
 	case strings.HasPrefix(text, "/ai_summary"):
 		response = b.handleAISummary(text)
+	case strings.HasPrefix(text, "/compare "):
+		response = b.handleCompare(text)
 	case strings.HasPrefix(text, "/catacombs"):
 		response = b.handleCatacombs(text)
 	case strings.HasPrefix(text, "/prune "):
@@ -412,6 +415,7 @@ I provide real-time analytics for Xandeum pNodes. Here's what I can do:
 /network - Show network overview statistics
 /search <region> - Find pNodes in a specific region
 /ai_summary [pnode_id] - Get AI-powered insights (network or specific pNode)
+/compare <id1> <id2> [smart] - Compare two pNodes (add 'smart' for AI analysis)
 /catacombs [limit] - View historical pNodes from the catacombs (default 10, max 20)
 
 _Data is fetched live from the Xandeum network._`
@@ -430,10 +434,8 @@ func (b *Bot) handleHelp() string {
 /network - Show network overview statistics
 /search <region> - Find pNodes in a specific region
 /ai_summary [pnode_id] - Get AI-powered insights (network or specific pNode)
+/compare <id1> <id2> [smart] - Compare two pNodes (add 'smart' for AI analysis)
 /catacombs [limit] - View historical pNodes from the catacombs (default 10, max 20)
-
-*Admin Commands:*
-/prune <password> - Prune old pNodes from database (admin only)
 
 *Examples:*
 /list_pnodes 5
@@ -441,6 +443,8 @@ func (b *Bot) handleHelp() string {
 /xdn_score def456
 /search Europe
 /network
+/compare abc123 def456
+/compare abc123 def456 smart
 /catacombs 5
 /ai_summary
 /ai_summary abc123
@@ -1127,6 +1131,116 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// handleCompare handles the /compare command
+func (b *Bot) handleCompare(text string) string {
+	parts := strings.Fields(text)
+	if len(parts) < 3 {
+		return "❌ Please provide two pNode IDs. Usage: /compare <id1> <id2> [smart]"
+	}
+
+	id1 := parts[1]
+	id2 := parts[2]
+	isSmart := len(parts) > 3 && strings.ToLower(parts[3]) == "smart"
+
+	// Get both pNodes
+	pnode1, err := b.apiGetPNodeByID(id1)
+	if err != nil {
+		logrus.Errorf("Failed to get pNode %s: %v", id1, err)
+		return fmt.Sprintf("❌ Failed to fetch data for pNode %s. Please check the ID and try again.", id1)
+	}
+	if pnode1 == nil || pnode1.ID == "" {
+		return fmt.Sprintf("❌ pNode %s not found in the network.", id1)
+	}
+
+	pnode2, err := b.apiGetPNodeByID(id2)
+	if err != nil {
+		logrus.Errorf("Failed to get pNode %s: %v", id2, err)
+		return fmt.Sprintf("❌ Failed to fetch data for pNode %s. Please check the ID and try again.", id2)
+	}
+	if pnode2 == nil || pnode2.ID == "" {
+		return fmt.Sprintf("❌ pNode %s not found in the network.", id2)
+	}
+
+	if isSmart {
+		// Use AI comparison
+		comparison, err := b.apiCompareNodes(pnode1, pnode2)
+		if err != nil {
+			logrus.Errorf("Failed to compare nodes: %v", err)
+			return "❌ Failed to generate AI comparison. Please try again later."
+		}
+		return fmt.Sprintf(`🤖 *AI Comparison: %s vs %s*
+
+%s
+
+_Analysis based on real-time network data_`, pnode1.ID, pnode2.ID, comparison)
+	} else {
+		// Normal comparison
+		return b.generateNormalComparison(pnode1, pnode2)
+	}
+}
+
+// generateNormalComparison generates a text table comparison
+func (b *Bot) generateNormalComparison(pnode1, pnode2 *models.PNode) string {
+	comparisonData := []struct {
+		metric string
+		key    string
+		unit   string
+	}{
+		{"Uptime", "uptime", "%"},
+		{"Latency", "latency", "ms"},
+		{"XDN Score", "xdnScore", ""},
+		{"CPU", "cpuPercent", "%"},
+		{"Packets Out", "packetsOut", ""},
+	}
+
+	var response strings.Builder
+	response.WriteString(fmt.Sprintf("⚖️ *Comparison: %s vs %s*\n\n", pnode1.ID, pnode2.ID))
+	response.WriteString("```\n")
+	response.WriteString(fmt.Sprintf("%-12s %-15s %-15s %-6s\n", "Metric", pnode1.ID[:12], pnode2.ID[:12], "Winner"))
+	response.WriteString(strings.Repeat("-", 50) + "\n")
+
+	for _, data := range comparisonData {
+		var val1, val2 float64
+		switch data.key {
+		case "uptime":
+			val1 = pnode1.Uptime
+			val2 = pnode2.Uptime
+		case "latency":
+			val1 = float64(pnode1.Latency)
+			val2 = float64(pnode2.Latency)
+		case "xdnScore":
+			val1 = pnode1.XDNScore
+			val2 = pnode2.XDNScore
+		case "cpuPercent":
+			val1 = pnode1.CPUPercent
+			val2 = pnode2.CPUPercent
+		case "packetsOut":
+			val1 = float64(pnode1.PacketsOut)
+			val2 = float64(pnode2.PacketsOut)
+		}
+
+		winner := "Tie"
+		if data.key == "latency" {
+			if val1 < val2 {
+				winner = pnode1.ID[:12]
+			} else if val2 < val1 {
+				winner = pnode2.ID[:12]
+			}
+		} else {
+			if val1 > val2 {
+				winner = pnode1.ID[:12]
+			} else if val2 > val1 {
+				winner = pnode2.ID[:12]
+			}
+		}
+
+		response.WriteString(fmt.Sprintf("%-12s %-15.2f %-15.2f %-6s\n", data.metric, val1, val2, winner))
+	}
+	response.WriteString("```\n")
+	response.WriteString("_Data fetched live from Xandeum network_")
+	return response.String()
 }
 
 // handleCatacombs handles the /catacombs command
