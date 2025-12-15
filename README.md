@@ -1,38 +1,11 @@
-# XDOrb Backend - Xandeum pNode Analytics API
+# XDOrb Infra
 
-A high-performant backend API for **[XDOrb](https://xdorb.appwrite.network)** - the Xandeum pNode analytics dashboard.
+<img src="https://xdorb.vercel.app/XDOrb_Banner.png" alt="XDOrb Logo" />
 
-## Features
+# Deployment Guide
 
-- **RESTful API**: Clean REST endpoints for pNode data
-- **Redis Caching**: Distributed caching with fallback to in-memory
-- **API Key Authentication**: Secure frontend-only access
-- **Rate Limiting**: Token bucket rate limiting
-- **Health Checks**: Comprehensive health monitoring
-<!-- - **Mock pRPC Integration**: Ready for real Xandeum pRPC connection -->
+Find this guide-as-an-article on the deployment and usage of the platform [here](https://medium.com/@davidnzube/xdorb-analytics-platform-for-xandeum-network-9d3bba499db0)
 
-## API Endpoints
+# Access
 
-### Public Endpoints
-- `GET /health` - Health check (no auth required)
-
-### Protected Endpoints (require API key)
-- `GET /api/dashboard/stats` - Dashboard statistics
-- `GET /api/pnodes` - List pNodes with filters
-- `GET /api/pnodes/:id` - pNode details
-- `GET /api/pnodes/:id/history` - Historical metrics
-- `GET /api/pnodes/:id/peers` - Connected peers
-- `GET /api/pnodes/:id/alerts` - pNode alerts
-- `GET /api/leaderboard` - Top performers
-- `GET /api/network/heatmap` - Network heatmap data
-
-## Security
-
-- API key authentication required for all endpoints except health
-- Rate limiting (100 requests/minute per IP)
-- Input validation and sanitization
-- CORS configuration for frontend domain
-
-### Access
-
-- For Access, reach out to developer: [Skipp | Telegram](https://t.me/skipp_dev) or [Skipp | X](https://x.com/DavidNzubee)
+For Access, reach out to developer: [Skipp | Telegram](https://t.me/skipp_dev) or [Skipp | X](https://x.com/DavidNzubee)
