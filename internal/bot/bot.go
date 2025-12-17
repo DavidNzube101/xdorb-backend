@@ -3,12 +3,16 @@ package bot
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"xdorb-backend/internal"
@@ -17,6 +21,7 @@ import (
 	"xdorb-backend/internal/prpc"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/lucasb-eyer/go-colorful"
 	"github.com/sirupsen/logrus"
 )
 
@@ -27,6 +32,13 @@ type Bot struct {
 	prpc       *prpc.Client
 	firebase   *internal.FirebaseService
 	httpClient *http.Client
+
+	// Job tracking
+	mu           sync.RWMutex
+	currentCycle int
+	totalCycles  int
+	isJobRunning bool
+	jobStartTime time.Time
 }
 
 // NewBot creates a new Telegram bot instance
@@ -60,6 +72,8 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 		{Command: "ai_summary", Description: "Get AI-powered insights (network or specific pNode)"},
 		{Command: "compare", Description: "Compare two pNodes (add 'smart' for AI analysis)"},
 		{Command: "catacombs", Description: "View historical pNodes (resting in peace)"},
+		{Command: "aggregate-analysis", Description: "Start background aggregation (Admin)"},
+		{Command: "agg_status", Description: "Check aggregation job status"},
 	}
 
 	setCommandsConfig := tgbotapi.NewSetMyCommands(commands...)
@@ -131,6 +145,10 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		response = b.handleCatacombs(text)
 	case strings.HasPrefix(text, "/prune "):
 		response = b.handlePrune(text, msg.From.UserName)
+	case strings.HasPrefix(text, "/aggregate-analysis"):
+		response = b.handleAggregateAnalysis(text, msg.From.UserName)
+	case strings.HasPrefix(text, "/agg_status"):
+		response = b.handleAggStatus()
 	default:
 		response = "Unknown command. Use /help to see available commands."
 	}
@@ -1341,6 +1359,197 @@ func (b *Bot) handlePrune(text string, username string) string {
 	}
 
 	return fmt.Sprintf("✅ *Catacombs pruned successfully!*\n\nRemoved pNodes older than %v from the historical database.\n\n_The catacombs have been cleaned... for now._", pruneAge)
+}
+
+// handleAggregateAnalysis performs heavy aggregation of network stats
+func (b *Bot) handleAggregateAnalysis(text string, username string) string {
+	if username != "@skipp_dev" && username != "skipp_dev" {
+		return "❌ Access denied. This command is restricted to administrators only."
+	}
+
+	parts := strings.Fields(text)
+	if len(parts) < 2 {
+		return "❌ Please provide the admin password. Usage: /aggregate-analysis <password>"
+	}
+
+	password := parts[1]
+	if password != b.config.TelegramAdminPassword {
+		return "❌ Invalid password. Access denied."
+	}
+
+	b.mu.Lock()
+	if b.isJobRunning {
+		b.mu.Unlock()
+		return "⚠️ A job is already running. Use /agg_status to check progress."
+	}
+	b.isJobRunning = true
+	b.currentCycle = 0
+	b.totalCycles = 24
+	b.jobStartTime = time.Now()
+	b.mu.Unlock()
+
+	// Start background job
+	go func() {
+		logrus.Info("Starting aggregate analysis job...")
+		defer func() {
+			b.mu.Lock()
+			b.isJobRunning = false
+			b.mu.Unlock()
+		}()
+		
+		for i := 0; i < 24; i++ {
+			b.mu.Lock()
+			b.currentCycle = i + 1
+			b.mu.Unlock()
+
+			logrus.Infof("Aggregation iteration %d/24", i+1)
+			
+			// 1. Fetch ALL nodes with stats (Heavy)
+			pnodes, err := b.prpc.GetPNodesWithStats()
+			if err != nil {
+				logrus.Errorf("Failed iteration %d: %v", i, err)
+				time.Sleep(10 * time.Second)
+				continue
+			}
+
+			// 2. Aggregate Data (logic mirrored from api/handlers.go but using enriched data)
+			var totalCapacity int64
+			var usedCapacity int64
+			var packetInTotal, packetOutTotal int
+			
+			geoMap := make(map[string]*models.GeoData)
+			var cpuUsage []models.CpuData
+			var ramUsage []models.RamData
+
+			for _, node := range pnodes {
+				totalCapacity += node.StorageCapacity
+				usedCapacity += node.StorageUsed
+				packetInTotal += node.PacketsIn
+				packetOutTotal += node.PacketsOut
+
+				// Geo
+				parts := strings.Split(node.Location, ", ")
+				country := "Unknown"
+				if len(parts) > 0 && parts[len(parts)-1] != "" {
+					country = parts[len(parts)-1]
+				}
+				
+				if _, exists := geoMap[country]; !exists {
+					geoMap[country] = &models.GeoData{
+						Country: country,
+						Color:   generateColor(country),
+					}
+				}
+				entry := geoMap[country]
+				entry.Count++
+				entry.AvgUptime += node.Uptime
+
+				// Stats
+				displayName := node.Name
+				if displayName == "" {
+					if len(node.ID) > 8 {
+						displayName = node.ID[:8]
+					} else {
+						displayName = node.ID
+					}
+				}
+
+				cpuUsage = append(cpuUsage, models.CpuData{
+					Node:  displayName,
+					Cpu:   node.CPUPercent,
+					Color: generateColor(node.ID),
+				})
+
+				ramUsage = append(ramUsage, models.RamData{
+					Node:  displayName,
+					Ram:   float64(node.MemoryUsed) / 1024 / 1024, // MB
+					Total: float64(node.MemoryTotal) / 1024 / 1024, // MB
+					Color: generateColor(node.ID),
+				})
+			}
+
+			// Finalize Geo
+			var geoDist []models.GeoData
+			for _, entry := range geoMap {
+				if entry.Count > 0 {
+					entry.AvgUptime = entry.AvgUptime / float64(entry.Count)
+				}
+				geoDist = append(geoDist, *entry)
+			}
+			sort.Slice(geoDist, func(i, j int) bool {
+				return geoDist[i].Count > geoDist[j].Count
+			})
+
+			snapshot := &models.AnalyticsData{
+				Performance: []models.MonthlyPerformance{},
+				Storage: models.StorageStats{
+					TotalCapacity: totalCapacity,
+					UsedCapacity:  usedCapacity,
+				},
+				GeoDistribution: geoDist,
+				CpuUsage:        cpuUsage,
+				RamUsage:        ramUsage,
+				PacketStreams: models.PacketData{
+					In:  packetInTotal,
+					Out: packetOutTotal,
+				},
+			}
+
+			// 3. Save to Firestore
+			if err := b.firebase.SaveNetworkSnapshot(context.Background(), snapshot); err != nil {
+				logrus.Errorf("Failed to save snapshot iteration %d: %v", i, err)
+			}
+
+			// Wait a bit between iterations
+			time.Sleep(5 * time.Second)
+		}
+		
+		logrus.Info("Aggregate analysis job completed.")
+	}()
+
+	return "🚀 Aggregate analysis job started. This will run 24 collection cycles in the background. The dashboard will update automatically as data is saved."
+}
+
+// Helper to generate stable color (duplicate from prpc/client.go)
+func generateColor(seed string) string {
+	hash := md5.Sum([]byte(seed))
+	s := int64(hash[0]) | int64(hash[1])<<8 | int64(hash[2])<<16
+	r := rand.New(rand.NewSource(s))
+	c := colorful.Hsl(r.Float64()*360.0, 0.7+r.Float64()*0.3, 0.4+r.Float64()*0.4)
+	return c.Hex()
+}
+
+// handleAggStatus reports the progress of the background aggregator
+func (b *Bot) handleAggStatus() string {
+	b.mu.RLock()
+	running := b.isJobRunning
+	curr := b.currentCycle
+	total := b.totalCycles
+	start := b.jobStartTime
+	b.mu.RUnlock()
+
+	var status string
+	if running {
+		status = fmt.Sprintf("✅ *Aggregator Job is RUNNING*\n\n• Progress: %d / %d cycles\n• Started: %s\n• Elapsed: %s",
+			curr, total, start.Format("15:04:05"), time.Since(start).Round(time.Second))
+	} else {
+		status = "💤 *Aggregator Job is IDLE*"
+	}
+
+	// Fetch magnitude from Firestore
+	snapshot, err := b.firebase.GetLatestNetworkSnapshot(context.Background())
+	if err == nil && snapshot != nil {
+		status += fmt.Sprintf("\n\n📊 *Latest Firestore Snapshot*\n• Total Nodes: %d\n• CPU Entries: %d\n• RAM Entries: %d\n• Countries: %d\n• Storage: %s",
+			len(snapshot.GeoDistribution), // Approximate total
+			len(snapshot.CpuUsage),
+			len(snapshot.RamUsage),
+			len(snapshot.GeoDistribution),
+			formatBytes(snapshot.Storage.UsedCapacity))
+	} else {
+		status += "\n\n⚠️ No snapshot found in Firestore."
+	}
+
+	return status
 }
 
 func min(a, b int) int {

@@ -99,6 +99,69 @@ func (fs *FirebaseService) SavePNode(ctx context.Context, pnode *models.PNode) e
 	return err
 }
 
+func (fs *FirebaseService) SavePNodesBatch(ctx context.Context, pnodes []models.PNode) error {
+	if fs.client == nil || len(pnodes) == 0 {
+		return nil
+	}
+
+	// Firestore batch limit is 500 operations
+	const batchSize = 400 
+	
+	for i := 0; i < len(pnodes); i += batchSize {
+		end := i + batchSize
+		if end > len(pnodes) {
+			end = len(pnodes)
+		}
+
+		batch := fs.client.Batch()
+		batchCount := 0
+
+		for _, pnode := range pnodes[i:end] {
+			// Validation
+			if pnode.ID == "" || strings.Contains(pnode.ID, "/") || strings.TrimSpace(pnode.ID) != pnode.ID {
+				continue
+			}
+
+			docRef := fs.client.Collection("pnodes").Doc(pnode.ID)
+			batch.Set(docRef, map[string]interface{}{
+				"id":              pnode.ID,
+				"name":            pnode.Name,
+				"status":          pnode.Status,
+				"uptime":          pnode.Uptime,
+				"latency":         pnode.Latency,
+				"validations":     pnode.Validations,
+				"rewards":         pnode.Rewards,
+				"location":        pnode.Location,
+				"region":          pnode.Region,
+				"lat":             pnode.Lat,
+				"lng":             pnode.Lng,
+				"storageUsed":     pnode.StorageUsed,
+				"storageCapacity": pnode.StorageCapacity,
+				"lastSeen":        pnode.LastSeen.Unix(),
+				"performance":     pnode.Performance,
+				"stake":           pnode.Stake,
+				"riskScore":       pnode.RiskScore,
+				"xdnScore":        pnode.XDNScore,
+				// New fields
+				"isPublic":            pnode.IsPublic,
+				"rpcPort":             pnode.RpcPort,
+				"version":             pnode.Version,
+				"storageUsagePercent": pnode.StorageUsagePercent,
+				"updatedAt":           time.Now().Unix(),
+			})
+			batchCount++
+		}
+
+		if batchCount > 0 {
+			if _, err := batch.Commit(ctx); err != nil {
+				log.Printf("Failed to commit batch %d: %v", i/batchSize, err)
+				// Continue to next batch instead of failing everything
+			}
+		}
+	}
+	return nil
+}
+
 func (fs *FirebaseService) GetAllPNodes(ctx context.Context) ([]models.PNode, error) {
 	if fs.client == nil {
 		return []models.PNode{}, nil
@@ -168,6 +231,33 @@ func (fs *FirebaseService) PruneOldNodes(ctx context.Context, maxAge time.Durati
 
 	_, err = batch.Commit(ctx)
 	return err
+}
+
+func (fs *FirebaseService) SaveNetworkSnapshot(ctx context.Context, snapshot *models.AnalyticsData) error {
+	if fs.client == nil {
+		return nil
+	}
+
+	_, err := fs.client.Collection("network_snapshots").Doc("latest").Set(ctx, snapshot)
+	return err
+}
+
+func (fs *FirebaseService) GetLatestNetworkSnapshot(ctx context.Context) (*models.AnalyticsData, error) {
+	if fs.client == nil {
+		return nil, nil
+	}
+
+	doc, err := fs.client.Collection("network_snapshots").Doc("latest").Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var snapshot models.AnalyticsData
+	if err := doc.DataTo(&snapshot); err != nil {
+		return nil, err
+	}
+
+	return &snapshot, nil
 }
 
 func (fs *FirebaseService) Close() error {

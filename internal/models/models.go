@@ -47,6 +47,36 @@ type DashboardStats struct {
 	Timestamp      int64   `json:"timestamp"`
 }
 
+// GeoData represents geographical distribution data
+type GeoData struct {
+	Country   string  `json:"country"`
+	Count     int     `json:"count"`
+	AvgUptime float64 `json:"avgUptime"`
+	Flag      string  `json:"flag"`
+	Color     string  `json:"color"`
+}
+
+// CpuData represents CPU utilization data
+type CpuData struct {
+	Node  string  `json:"node"`
+	Cpu   float64 `json:"cpu"`
+	Color string  `json:"color"`
+}
+
+// RamData represents RAM utilization data
+type RamData struct {
+	Node  string  `json:"node"`
+	Ram   float64 `json:"ram"`
+	Total float64 `json:"total"`
+	Color string  `json:"color"`
+}
+
+// PacketData represents global packet streams
+type PacketData struct {
+	In  int `json:"in"`
+	Out int `json:"out"`
+}
+
 // PNodeHistory represents historical metrics for a pNode
 type PNodeHistory struct {
 	Timestamp   int64   `json:"timestamp"`
@@ -85,8 +115,12 @@ type HeatmapPoint struct {
 
 // AnalyticsData represents the data for the analytics page
 type AnalyticsData struct {
-	Performance []MonthlyPerformance `json:"performance"`
-	Storage     StorageStats         `json:"storage"`
+	Performance     []MonthlyPerformance `json:"performance"`
+	Storage         StorageStats         `json:"storage"`
+	GeoDistribution []GeoData            `json:"geoDistribution"`
+	CpuUsage        []CpuData            `json:"cpuUsage"`
+	RamUsage        []RamData            `json:"ramUsage"`
+	PacketStreams   PacketData           `json:"packetStreams"`
 }
 
 type MonthlyPerformance struct {

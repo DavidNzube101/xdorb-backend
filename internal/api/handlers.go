@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"xdorb-backend/internal"
@@ -21,6 +23,7 @@ import (
 	"xdorb-backend/pkg/middleware"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lucasb-eyer/go-colorful"
 	"github.com/sirupsen/logrus"
 )
 
@@ -89,6 +92,10 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 		// Analytics
 		v1.GET("/analytics", h.GetAnalytics)
+		// v1.GET("/analytics/geo", h.GetGeo)
+		// v1.GET("/analytics/cpu", h.GetCpu)
+		// v1.GET("/analytics/ram", h.GetRam)
+		// v1.GET("/analytics/packets", h.GetPackets)
 		v1.GET("/ai/network-summary", h.GetIntelligentNetworkSummary)
 		v1.POST("/ai/compare-nodes", h.IntelligentNodeComparison)
 
@@ -262,12 +269,14 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 		}
 	}
 
-	// Save to Firebase concurrently
+	// Save to Firebase using batch (Efficient)
 	go func() {
-		for _, pnode := range pnodes {
-			if err := h.firebase.SavePNode(context.Background(), &pnode); err != nil {
-				logrus.Warn("Failed to save pNode to Firebase:", err)
-			}
+		// Use a detached context with timeout for the background save
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		
+		if err := h.firebase.SavePNodesBatch(ctx, pnodes); err != nil {
+			logrus.Warn("Failed to save pNode batch to Firebase:", err)
 		}
 	}()
 
@@ -1057,7 +1066,21 @@ func (h *Handler) GetAnalytics(c *gin.Context) {
 		}
 	}
 
-	// Fetch from pRPC
+	// 1. Try to get rich snapshot from Firestore (populated by bot job)
+	if !simulated {
+		snapshot, err := h.firebase.GetLatestNetworkSnapshot(c.Request.Context())
+		if err == nil && snapshot != nil {
+			// Cache the result
+			if err := h.cache.Set(cacheKey, snapshot, h.config.StatsCacheTTL); err != nil {
+				logrus.Warn("Failed to cache analytics snapshot:", err)
+			}
+			c.JSON(http.StatusOK, models.APIResponse{Data: snapshot})
+			return
+		}
+		logrus.Warn("Failed to get analytics snapshot from Firestore, falling back to live pRPC:", err)
+	}
+
+	// 2. Fallback: Fetch from pRPC (Live, but might be missing heavy stats)
 	analytics, err := h.prpc.GetAnalytics(simulated)
 	if err != nil {
 		logrus.Error("Failed to get analytics:", err)
@@ -1157,6 +1180,401 @@ func (h *Handler) readCSVFile(filename string) ([][]string, error) {
 	}
 
 	return rows, nil
+}
+
+// GetGeo returns geographical distribution of nodes
+func (h *Handler) GetGeo(c *gin.Context) {
+	cacheKey := "analytics:geo"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var geo []models.GeoData
+		if err := cached.Unmarshal(&geo); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: geo})
+			return
+		}
+	}
+
+	// Get all nodes
+	pnodes, err := h.getGlobalPNodes()
+	if err != nil {
+		logrus.Error("Failed to get pNodes for geo:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch geographical data",
+		})
+		return
+	}
+
+	// Group by region, calculate count and avg uptime
+	regionGroups := make(map[string][]models.PNode)
+	for _, node := range pnodes {
+		region := node.Region
+		if region == "" || region == "Unknown" {
+			region = "Unknown"
+		}
+		regionGroups[region] = append(regionGroups[region], node)
+	}
+
+	var geoData []models.GeoData
+	for region, nodes := range regionGroups {
+		count := len(nodes)
+		var totalUptime float64
+		for _, node := range nodes {
+			totalUptime += node.Uptime
+		}
+		avgUptime := totalUptime / float64(count)
+
+		// Map region to country code for flag
+		countryCode := getCountryCodeForRegion(region)
+
+		geoData = append(geoData, models.GeoData{
+			Country:   region,
+			Count:     count,
+			AvgUptime: avgUptime,
+			Flag:      getFlagEmoji(countryCode),
+			Color:     "",
+		})
+	}
+
+	// Generate colors
+	colors := generateUniqueColors(len(geoData))
+	for i := range geoData {
+		geoData[i].Color = colors[i]
+	}
+
+	// Cache for 30 seconds
+	if err := h.cache.Set(cacheKey, geoData, 30*time.Second); err != nil {
+		logrus.Warn("Failed to cache geo data:", err)
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: geoData})
+}
+
+// GetCpu returns CPU utilization data for all nodes
+func (h *Handler) GetCpu(c *gin.Context) {
+	cacheKey := "analytics:cpu"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var cpuData []models.CpuData
+		if err := cached.Unmarshal(&cpuData); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: cpuData})
+			return
+		}
+	}
+
+	// Get all nodes
+	pnodes, err := h.getGlobalPNodes()
+	if err != nil {
+		logrus.Error("Failed to get pNodes for CPU:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch CPU data",
+		})
+		return
+	}
+
+	// Fetch real CPU metrics for nodes (limit to avoid overload)
+	const maxConcurrent = 100
+	semaphore := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var cpuData []models.CpuData
+
+	// Generate unique colors
+	colors := generateUniqueColors(len(pnodes))
+
+	for i, node := range pnodes {
+		wg.Add(1)
+		go func(idx int, n models.PNode) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // Acquire
+			defer func() { <-semaphore }() // Release
+
+			nodeCacheKey := fmt.Sprintf("pnode:metrics:%s", n.ID)
+			cpu := 0.0
+
+			// Try cache first for the individual node
+			if cached, err := h.cache.Get(nodeCacheKey); err == nil {
+				var metrics models.PNode
+				if err := cached.Unmarshal(&metrics); err == nil {
+					cpu = metrics.CPUPercent
+				}
+			} else {
+				// If not in cache, fetch and then cache it
+				realNode, err := h.prpc.GetPNodeByID(n.ID)
+				if err == nil && realNode != nil {
+					cpu = realNode.CPUPercent
+					// Cache the whole node object for future use by other endpoints
+					if err := h.cache.Set(nodeCacheKey, realNode, 5*time.Minute); err != nil {
+						logrus.Warnf("Failed to cache metrics for node %s: %v", n.ID, err)
+					}
+				} else {
+					// Fallback to the global list's value if pRPC fails
+					cpu = n.CPUPercent
+				}
+			}
+
+			mu.Lock()
+			cpuData = append(cpuData, models.CpuData{
+				Node:  n.ID,
+				Cpu:   cpu,
+				Color: colors[idx],
+			})
+			mu.Unlock()
+		}(i, node)
+	}
+
+	wg.Wait()
+
+	// Sort by node ID for consistency
+	sort.Slice(cpuData, func(i, j int) bool {
+		return cpuData[i].Node < cpuData[j].Node
+	})
+
+	// Log sample data for debugging
+	if len(cpuData) > 0 {
+		logrus.Infof("CPU data for %d nodes, sample first: %+v", len(cpuData), cpuData[0])
+	}
+
+	// Cache for 5 seconds
+	if err := h.cache.Set(cacheKey, cpuData, 5*time.Second); err != nil {
+		logrus.Warn("Failed to cache CPU data:", err)
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: cpuData})
+}
+
+// GetRam returns RAM utilization data for all nodes
+func (h *Handler) GetRam(c *gin.Context) {
+	cacheKey := "analytics:ram"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var ramData []models.RamData
+		if err := cached.Unmarshal(&ramData); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: ramData})
+			return
+		}
+	}
+
+	pnodes, err := h.getGlobalPNodes()
+	if err != nil {
+		logrus.Error("Failed to get pNodes for RAM:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch RAM data",
+		})
+		return
+	}
+
+	// Fetch real RAM metrics for nodes (limit to avoid overload)
+	const maxConcurrent = 100
+	semaphore := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var ramData []models.RamData
+
+	// Generate unique colors
+	colors := generateUniqueColors(len(pnodes))
+
+	for i, node := range pnodes {
+		wg.Add(1)
+		go func(idx int, n models.PNode) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // Acquire
+			defer func() { <-semaphore }() // Release
+
+			nodeCacheKey := fmt.Sprintf("pnode:metrics:%s", n.ID)
+			ram := 0.0
+
+			// Try cache first for the individual node
+			if cached, err := h.cache.Get(nodeCacheKey); err == nil {
+				var metrics models.PNode
+				if err := cached.Unmarshal(&metrics); err == nil {
+					if metrics.MemoryTotal > 0 {
+						ram = (float64(metrics.MemoryUsed) / float64(metrics.MemoryTotal)) * 100
+					}
+				}
+			} else {
+				// If not in cache, fetch and then cache it
+				realNode, err := h.prpc.GetPNodeByID(n.ID)
+				if err == nil && realNode != nil {
+					if realNode.MemoryTotal > 0 {
+						ram = (float64(realNode.MemoryUsed) / float64(realNode.MemoryTotal)) * 100
+					}
+					// Cache the whole node object for future use by other endpoints
+					if err := h.cache.Set(nodeCacheKey, realNode, 5*time.Minute); err != nil {
+						logrus.Warnf("Failed to cache metrics for node %s: %v", n.ID, err)
+					}
+				} else {
+					// Fallback to the global list's value if pRPC fails
+					if n.MemoryTotal > 0 {
+						ram = (float64(n.MemoryUsed) / float64(n.MemoryTotal)) * 100
+					}
+				}
+			}
+
+			mu.Lock()
+			ramData = append(ramData, models.RamData{
+				Node:  n.ID,
+				Ram:   ram,
+				Color: colors[idx],
+			})
+			mu.Unlock()
+		}(i, node)
+	}
+
+	wg.Wait()
+
+	// Sort by node ID for consistency
+	sort.Slice(ramData, func(i, j int) bool {
+		return ramData[i].Node < ramData[j].Node
+	})
+
+	// Log sample data for debugging
+	if len(ramData) > 0 {
+		logrus.Infof("RAM data for %d nodes, sample first: %+v", len(ramData), ramData[0])
+	}
+
+	// Cache for 5 seconds
+	if err := h.cache.Set(cacheKey, ramData, 5*time.Second); err != nil {
+		logrus.Warn("Failed to cache RAM data:", err)
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: ramData})
+}
+
+// GetPackets returns global packet streams
+func (h *Handler) GetPackets(c *gin.Context) {
+	cacheKey := "analytics:packets"
+
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var packetData models.PacketData
+		if err := cached.Unmarshal(&packetData); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: packetData})
+			return
+		}
+	}
+
+	// Get all nodes
+	pnodes, err := h.getGlobalPNodes()
+	if err != nil {
+		logrus.Error("Failed to get pNodes for packets:", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Error: "Failed to fetch packet data",
+		})
+		return
+	}
+
+	// Fetch real packet metrics for nodes (limit to avoid overload)
+	const maxConcurrent = 100
+	semaphore := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var totalIn, totalOut int
+
+	for _, node := range pnodes {
+		wg.Add(1)
+		go func(n models.PNode) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // Acquire
+			defer func() { <-semaphore }() // Release
+
+			nodeCacheKey := fmt.Sprintf("pnode:metrics:%s", n.ID)
+			var packetsIn, packetsOut int
+
+			// Try cache first for the individual node
+			if cached, err := h.cache.Get(nodeCacheKey); err == nil {
+				var metrics models.PNode
+				if err := cached.Unmarshal(&metrics); err == nil {
+					packetsIn = metrics.PacketsIn
+					packetsOut = metrics.PacketsOut
+				}
+			} else {
+				// If not in cache, fetch and then cache it
+				realNode, err := h.prpc.GetPNodeByID(n.ID)
+				if err == nil && realNode != nil {
+					packetsIn = realNode.PacketsIn
+					packetsOut = realNode.PacketsOut
+					// Cache the whole node object for future use by other endpoints
+					if err := h.cache.Set(nodeCacheKey, realNode, 5*time.Minute); err != nil {
+						logrus.Warnf("Failed to cache metrics for node %s: %v", n.ID, err)
+					}
+				} else {
+					// Fallback to the global list's value if pRPC fails
+					packetsIn = n.PacketsIn
+					packetsOut = n.PacketsOut
+				}
+			}
+
+			mu.Lock()
+			totalIn += packetsIn
+			totalOut += packetsOut
+			mu.Unlock()
+		}(node)
+	}
+
+	wg.Wait()
+
+	packetData := models.PacketData{
+		In:  totalIn,
+		Out: totalOut,
+	}
+
+	// Log sample data for debugging
+	logrus.Infof("Packet data: %+v", packetData)
+
+	// Cache for 5 seconds
+	if err := h.cache.Set(cacheKey, packetData, 5*time.Second); err != nil {
+		logrus.Warn("Failed to cache packet data:", err)
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Data: packetData})
+}
+
+// Helper functions
+func getCountryCodeForRegion(region string) string {
+	regionToCountry := map[string]string{
+		"North America": "US",
+		"Europe":        "DE",
+		"Asia":          "JP",
+		"South America": "BR",
+		"Africa":        "ZA",
+		"Australia":     "AU",
+		"Oceania":       "AU",
+		"Unknown":       "UN",
+	}
+	if code, ok := regionToCountry[region]; ok {
+		return code
+	}
+	return "UN"
+}
+
+func getFlagEmoji(countryCode string) string {
+	// Simple flag emoji from country code
+	if countryCode == "UN" {
+		return "🏳️"
+	}
+	return string(rune(0x1F1E6+int(countryCode[0])-65)) + string(rune(0x1F1E6+int(countryCode[1])-65))
+}
+
+func generateUniqueColors(n int) []string {
+	palette, err := colorful.WarmPalette(n)
+	if err != nil {
+		// Fallback to distinct colors
+		colors := make([]string, n)
+		for i := 0; i < n; i++ {
+			hue := float64(i) / float64(n) * 360
+			col := colorful.Hsv(hue, 0.7, 0.8)
+			colors[i] = col.Hex()
+		}
+		return colors
+	}
+	colors := make([]string, n)
+	for i, col := range palette {
+		colors[i] = col.Hex()
+	}
+	return colors
 }
 
 // GetIntelligentNetworkSummary returns an AI-generated summary of the network

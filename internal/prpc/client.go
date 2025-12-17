@@ -1,9 +1,11 @@
 package prpc
 
 import (
+	"crypto/md5"
 	"fmt"
 	"math/rand"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +15,7 @@ import (
 	"xdorb-backend/internal/models"
 
 	prpc "github.com/DavidNzube101/xandeum-prpc-go"
-
+	"github.com/lucasb-eyer/go-colorful"
 	"github.com/sirupsen/logrus"
 )
 
@@ -305,6 +307,63 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 	return nil, fmt.Errorf("invalid response format: unexpected type %T", podsResp)
 }
 
+// GetPNodesWithStats fetches pNodes with real-time stats (HEAVY operation)
+func (c *Client) GetPNodesWithStats() ([]models.PNode, error) {
+	// First get the base list using GetPNodes (this gets us the list of pods)
+	baseNodes, err := c.GetPNodes(&PNodeFilters{Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+
+	var wg sync.WaitGroup
+	var enrichedNodes []models.PNode
+	var mu sync.Mutex
+
+	// Limit concurrency to avoid file descriptor exhaustion
+	sem := make(chan struct{}, 50) 
+
+	for _, node := range baseNodes {
+		wg.Add(1)
+		go func(n models.PNode) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Fetch stats
+			ip := strings.Split(n.ID, " ")[0] // ID is often PubKey, but Name has IP?
+			// Re-parse IP from name if ID is pubkey: "Node 1.2.3.4 (ABCD)"
+			if strings.HasPrefix(n.Name, "Node ") {
+				parts := strings.Split(n.Name, " ")
+				if len(parts) >= 2 {
+					ip = parts[1]
+				}
+			}
+			// Fallback: if ID looks like IP
+			if net.ParseIP(n.ID) != nil {
+				ip = n.ID
+			}
+
+			nodeClient := prpc.NewClient(ip, c.cfg.PRPCTimeout)
+			stats, err := nodeClient.GetStats()
+			
+			if err == nil && stats != nil {
+				n.CPUPercent = stats.CPUPercent
+				n.MemoryUsed = stats.RAMUsed
+				n.MemoryTotal = stats.RAMTotal
+				n.PacketsIn = stats.PacketsReceived
+				n.PacketsOut = stats.PacketsSent
+			}
+
+			mu.Lock()
+			enrichedNodes = append(enrichedNodes, n)
+			mu.Unlock()
+		}(node)
+	}
+
+	wg.Wait()
+	return enrichedNodes, nil
+}
+
 // GetPNodeByID fetches a specific pNode by ID using the library's concurrent lookup
 func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 	// Use the library's FindPNode function
@@ -571,6 +630,15 @@ func (c *Client) GetNetworkHeatmap() ([]models.HeatmapPoint, error) {
 	return heatmap, nil
 }
 
+// Helper to generate stable color
+func generateColor(seed string) string {
+	hash := md5.Sum([]byte(seed))
+	s := int64(hash[0]) | int64(hash[1])<<8 | int64(hash[2])<<16
+	r := rand.New(rand.NewSource(s))
+	c := colorful.Hsl(r.Float64()*360.0, 0.7+r.Float64()*0.3, 0.4+r.Float64()*0.4)
+	return c.Hex()
+}
+
 // GetAnalytics fetches network analytics (aggregated from live data)
 func (c *Client) GetAnalytics(simulated bool) (*models.AnalyticsData, error) {
 	// Fetch all nodes to aggregate real storage data
@@ -582,10 +650,73 @@ func (c *Client) GetAnalytics(simulated bool) (*models.AnalyticsData, error) {
 	var totalCapacity int64
 	var usedCapacity int64
 
+	// Geo Distribution
+	geoMap := make(map[string]*models.GeoData)
+	
+	// CPU and RAM Usage
+	var cpuUsage []models.CpuData
+	var ramUsage []models.RamData
+	var packetInTotal, packetOutTotal int
+
 	for _, node := range pnodes {
 		totalCapacity += node.StorageCapacity
 		usedCapacity += node.StorageUsed
+
+		// Geo
+		parts := strings.Split(node.Location, ", ")
+		country := "Unknown"
+		if len(parts) > 0 && parts[len(parts)-1] != "" {
+			country = parts[len(parts)-1]
+		}
+		
+		if _, exists := geoMap[country]; !exists {
+			geoMap[country] = &models.GeoData{
+				Country: country,
+				Color:   generateColor(country),
+			}
+		}
+		entry := geoMap[country]
+		entry.Count++
+		entry.AvgUptime += node.Uptime
+
+		// Stats
+		displayName := node.Name
+		if displayName == "" {
+			if len(node.ID) > 8 {
+				displayName = node.ID[:8]
+			} else {
+				displayName = node.ID
+			}
+		}
+
+		cpuUsage = append(cpuUsage, models.CpuData{
+			Node:  displayName,
+			Cpu:   node.CPUPercent,
+			Color: generateColor(node.ID),
+		})
+
+		ramUsage = append(ramUsage, models.RamData{
+			Node:  displayName,
+			Ram:   float64(node.MemoryUsed) / 1024 / 1024, // MB
+			Color: generateColor(node.ID),
+		})
+
+		packetInTotal += node.PacketsIn
+		packetOutTotal += node.PacketsOut
 	}
+
+	// Finalize Geo
+	var geoDist []models.GeoData
+	for _, entry := range geoMap {
+		if entry.Count > 0 {
+			entry.AvgUptime = entry.AvgUptime / float64(entry.Count)
+		}
+		geoDist = append(geoDist, *entry)
+	}
+	// Sort Geo by Count desc
+	sort.Slice(geoDist, func(i, j int) bool {
+		return geoDist[i].Count > geoDist[j].Count
+	})
 
 	var performance []models.MonthlyPerformance
 	if simulated {
@@ -608,6 +739,13 @@ func (c *Client) GetAnalytics(simulated bool) (*models.AnalyticsData, error) {
 			TotalCapacity: totalCapacity,
 			UsedCapacity:  usedCapacity,
 			GrowthRate:    0, // Cannot calculate without history
+		},
+		GeoDistribution: geoDist,
+		CpuUsage:        cpuUsage,
+		RamUsage:        ramUsage,
+		PacketStreams: models.PacketData{
+			In:  packetInTotal,
+			Out: packetOutTotal,
 		},
 	}, nil
 }

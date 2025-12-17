@@ -11,6 +11,7 @@ require (
 	github.com/google/generative-ai-go v0.20.1
 	github.com/ip2location/ip2location-go/v9 v9.8.0
 	github.com/joho/godotenv v1.5.1
+	github.com/lucasb-eyer/go-colorful v1.3.0
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/sirupsen/logrus v1.9.3
 	google.golang.org/api v0.257.0
