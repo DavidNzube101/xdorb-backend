@@ -8,6 +8,7 @@ require (
 	github.com/DavidNzube101/xandeum-prpc-go v0.0.0-20251212102422-0d15b1641238
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
+	github.com/google/generative-ai-go v0.20.1
 	github.com/ip2location/ip2location-go/v9 v9.8.0
 	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.17.2
@@ -49,7 +50,6 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/google/generative-ai-go v0.20.1 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.7 // indirect

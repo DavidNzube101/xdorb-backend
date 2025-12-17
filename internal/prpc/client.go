@@ -235,17 +235,18 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 					latency = rand.Intn(90) + 10
 				}
 
-				// Convert uptime from seconds to percentage over 24 hours, capped at 100%
-				uptimePercentage := (float64(pod.Uptime) / 86400.0) * 100.0
-				if uptimePercentage > 100.0 {
-					uptimePercentage = 100.0
+				// Uptime in seconds
+				uptimeSeconds := float64(pod.Uptime)
+				uptimePercentage := uptimeSeconds / 86400 * 100
+				if uptimePercentage > 100 {
+					uptimePercentage = 100
 				}
 
 				pnode := models.PNode{
 					ID:              pnodeID,
 					Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
 					Status:          status,
-					Uptime:          uptimePercentage,
+					Uptime:          uptimeSeconds,
 					Latency:         latency,
 					Validations:     0, // Not available in this API
 					Rewards:         0, // Not available in this API
@@ -261,10 +262,10 @@ func (c *Client) GetPNodes(filters *PNodeFilters) ([]models.PNode, error) {
 					RiskScore:       0, // Not available in this API
 					XDNScore:        calculateXDNScore(0, uptimePercentage, latency, 0),
 					// New fields from rich API - not available in basic PodsResponse
-					IsPublic:            false,     // Default
-					RpcPort:             6000,      // Default
+					IsPublic:            false, // Default
+					RpcPort:             6000,  // Default
 					Version:             pod.Version,
-					StorageUsagePercent: 0,         // Default
+					StorageUsagePercent: 0, // Default
 				}
 
 				mu.Lock()
@@ -388,17 +389,18 @@ func (c *Client) GetPNodeByID(id string) (*models.PNode, error) {
 		pnodeID = ip
 	}
 
-	// Convert uptime from seconds to percentage over 24 hours, capped at 100%
-	uptimePercentage := (float64(targetPod.Uptime) / 86400.0) * 100.0
-	if uptimePercentage > 100.0 {
-		uptimePercentage = 100.0
+	// Uptime in seconds
+	uptimeSeconds := float64(stats.Uptime)
+	uptimePercentage := uptimeSeconds / 86400 * 100
+	if uptimePercentage > 100 {
+		uptimePercentage = 100
 	}
 
 	pnode := &models.PNode{
 		ID:              pnodeID,
 		Name:            fmt.Sprintf("Node %s (%s)", ip, shortPubkey),
 		Status:          status,
-		Uptime:          uptimePercentage,
+		Uptime:          uptimeSeconds,
 		Latency:         latency,
 		Validations:     0,
 		Rewards:         0,

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -437,7 +436,7 @@ func (h *Handler) GetPNodeByID(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: enriched})
 }
 
-// GetPNodeMetrics returns simulated real-time metrics for a specific pNode
+// GetPNodeMetrics returns real-time metrics for a specific pNode
 func (h *Handler) GetPNodeMetrics(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
@@ -447,54 +446,34 @@ func (h *Handler) GetPNodeMetrics(c *gin.Context) {
 		return
 	}
 
-	// For simulation, we can fetch the base node data to have some realistic static values.
-	// In a real-world scenario, this endpoint would ideally hit a lightweight pRPC method
-	// that only returns the frequently changing metrics.
-	allNodes, err := h.getGlobalPNodes()
-	if err != nil {
-		logrus.Error("Failed to get pNodes for metrics simulation: ", err)
-		c.JSON(http.StatusInternalServerError, models.APIResponse{
-			Error: "Failed to fetch node data for metrics",
-		})
-		return
-	}
+	cacheKey := "pnode:metrics:" + id
 
-	var baseNode *models.PNode
-	for i := range allNodes {
-		if allNodes[i].ID == id {
-			// Create a copy to avoid modifying the cached global list
-			nodeCopy := allNodes[i]
-			baseNode = &nodeCopy
-			break
+	// Try cache first
+	if cached, err := h.cache.Get(cacheKey); err == nil {
+		var pnode models.PNode
+		if err := cached.Unmarshal(&pnode); err == nil {
+			c.JSON(http.StatusOK, models.APIResponse{Data: pnode})
+			return
 		}
 	}
 
-	if baseNode == nil {
-		c.JSON(http.StatusNotFound, models.APIResponse{
-			Error: "Node not found",
+	// Fetch real data from pRPC
+	pnode, err := h.prpc.GetPNodeByID(id)
+	if err != nil {
+		// Return 200 with error JSON for frontend to handle
+		c.JSON(http.StatusOK, models.APIResponse{
+			Error: "Failed to fetch real-time metrics from pNode",
 		})
 		return
 	}
 
-	// Simulate the live-updating parts
-	baseNode.CPUPercent = float64(20 + rand.Intn(30)) // 20-50%
-	if baseNode.MemoryTotal > 0 {
-		// Simulate 50-75% memory usage
-		baseNode.MemoryUsed = baseNode.MemoryTotal/2 + rand.Int63n(baseNode.MemoryTotal/4)
-	}
-	baseNode.Latency = 30 + rand.Intn(40) // 30-70ms
-
-	// The frontend's formatUptime function expects seconds.
-	// We simulate a dynamic uptime that increases over time.
-	if baseNode.Uptime < 86400 { // If uptime is less than a day, give it a baseline
-		baseNode.Uptime = float64(86400 + rand.Intn(3600))
-	} else {
-		baseNode.Uptime += 2.0 // Increment by 2 seconds, matching frontend poll
+	// Cache the result for 30 seconds
+	if err := h.cache.Set(cacheKey, pnode, 30*time.Second); err != nil {
+		logrus.Warn("Failed to cache pNode metrics:", err)
 	}
 
-	c.JSON(http.StatusOK, models.APIResponse{Data: baseNode})
+	c.JSON(http.StatusOK, models.APIResponse{Data: pnode})
 }
-
 
 // enrichNode is a helper to add registration status to a node
 func enrichNode(node *models.PNode, registeredPNodes map[string]bool) *models.PNode {
@@ -632,6 +611,11 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 		latency := allNodes[i].Latency
 		riskScore := allNodes[i].RiskScore
 
+		uptimePercent := uptime / 86400 * 100
+		if uptimePercent > 100 {
+			uptimePercent = 100
+		}
+
 		latencyScore := 100.0 - float64(latency)
 		if latencyScore < 0 {
 			latencyScore = 0
@@ -642,7 +626,7 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 			riskScoreNormalized = 0
 		}
 
-		allNodes[i].XDNScore = (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
+		allNodes[i].XDNScore = (stake * 0.4) + (uptimePercent * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
 	}
 
 	// Sort by XDN Score (descending), then by stake (descending) as secondary sort
@@ -1167,8 +1151,7 @@ func (h *Handler) readCSVFile(filename string) ([][]string, error) {
 
 	reader := csv.NewReader(file)
 
-
-rows, err := reader.ReadAll()
+	rows, err := reader.ReadAll()
 	if err != nil {
 		return nil, err
 	}
