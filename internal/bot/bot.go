@@ -72,7 +72,7 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 		{Command: "ai_summary", Description: "Get AI-powered insights (network or specific pNode)"},
 		{Command: "compare", Description: "Compare two pNodes (add 'smart' for AI analysis)"},
 		{Command: "catacombs", Description: "View historical pNodes (resting in peace)"},
-		{Command: "aggregate-analysis", Description: "Start background aggregation (Admin)"},
+		{Command: "aggregate_analysis", Description: "Start background aggregation (Admin)"},
 		{Command: "agg_status", Description: "Check aggregation job status"},
 	}
 
