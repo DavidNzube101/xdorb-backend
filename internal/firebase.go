@@ -100,7 +100,7 @@ func (fs *FirebaseService) SavePNode(ctx context.Context, pnode *models.PNode) e
 }
 
 func (fs *FirebaseService) SavePNodesBatch(ctx context.Context, pnodes []models.PNode) error {
-	if fs.client == nil || len(pnodes) == 0 {
+	if fs == nil || fs.client == nil || len(pnodes) == 0 {
 		return nil
 	}
 

@@ -145,7 +145,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		response = b.handleCatacombs(text)
 	case strings.HasPrefix(text, "/prune "):
 		response = b.handlePrune(text, msg.From.UserName)
-	case strings.HasPrefix(text, "/aggregate-analysis"):
+	case strings.HasPrefix(text, "/aggregate_analysis"):
 		response = b.handleAggregateAnalysis(text, msg.From.UserName)
 	case strings.HasPrefix(text, "/agg_status"):
 		response = b.handleAggStatus()
