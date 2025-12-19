@@ -52,7 +52,7 @@ func NewFirebaseService(cfg *config.Config) (*FirebaseService, error) {
 }
 
 func (fs *FirebaseService) SavePNode(ctx context.Context, pnode *models.PNode) error {
-	if fs.client == nil {
+	if fs == nil || fs.client == nil {
 		return nil // Firebase not configured
 	}
 
@@ -163,7 +163,7 @@ func (fs *FirebaseService) SavePNodesBatch(ctx context.Context, pnodes []models.
 }
 
 func (fs *FirebaseService) GetAllPNodes(ctx context.Context) ([]models.PNode, error) {
-	if fs.client == nil {
+	if fs == nil || fs.client == nil {
 		return []models.PNode{}, nil
 	}
 
@@ -206,7 +206,7 @@ func (fs *FirebaseService) GetAllPNodes(ctx context.Context) ([]models.PNode, er
 }
 
 func (fs *FirebaseService) PruneOldNodes(ctx context.Context, maxAge time.Duration) error {
-	if fs.client == nil {
+	if fs == nil || fs.client == nil {
 		return nil
 	}
 
