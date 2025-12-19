@@ -234,7 +234,7 @@ func (fs *FirebaseService) PruneOldNodes(ctx context.Context, maxAge time.Durati
 }
 
 func (fs *FirebaseService) SaveNetworkSnapshot(ctx context.Context, snapshot *models.AnalyticsData) error {
-	if fs.client == nil {
+	if fs == nil || fs.client == nil {
 		return nil
 	}
 
@@ -243,7 +243,7 @@ func (fs *FirebaseService) SaveNetworkSnapshot(ctx context.Context, snapshot *mo
 }
 
 func (fs *FirebaseService) GetLatestNetworkSnapshot(ctx context.Context) (*models.AnalyticsData, error) {
-	if fs.client == nil {
+	if fs == nil || fs.client == nil {
 		return nil, nil
 	}
 
