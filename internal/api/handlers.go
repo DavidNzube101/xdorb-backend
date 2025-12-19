@@ -260,12 +260,55 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 		// Continue without registration data if there's an error, but log it
 	}
 
-	// Enrich the nodes with the registration status
+	// Fetch latest snapshot for CPU/RAM enrichment (Best effort)
+	var cpuMap map[string]float64
+	var ramMap map[string]struct{ used, total float64 }
+
+	// Try to get snapshot from Firestore (should be fast as it's 1 doc)
+	// In a real prod env, we'd cache this snapshot in Redis too.
+	snapshot, err := h.firebase.GetLatestNetworkSnapshot(context.Background())
+	if err == nil && snapshot != nil {
+		cpuMap = make(map[string]float64)
+		ramMap = make(map[string]struct{ used, total float64 })
+		
+		for _, cpu := range snapshot.CpuUsage {
+			cpuMap[cpu.Node] = cpu.Cpu
+		}
+		for _, ram := range snapshot.RamUsage {
+			ramMap[ram.Node] = struct{ used, total float64 }{ram.Ram, ram.Total}
+		}
+	}
+
+	// Enrich the nodes
 	for i := range pnodes {
+		// Registration
 		if _, ok := registeredPNodes[pnodes[i].ID]; ok {
 			pnodes[i].Registered = true
 		} else {
 			pnodes[i].Registered = false
+		}
+
+		// Stats Enrichment (if snapshot available)
+		if cpuMap != nil {
+			displayName := pnodes[i].Name
+			if displayName == "" {
+				if len(pnodes[i].ID) >= 8 {
+					displayName = pnodes[i].ID[:8]
+				} else {
+					displayName = pnodes[i].ID
+				}
+			}
+
+			// Enriched CPU
+			if val, ok := cpuMap[displayName]; ok {
+				pnodes[i].CPUPercent = val
+			}
+			
+			// Enriched RAM
+			if val, ok := ramMap[displayName]; ok {
+				pnodes[i].MemoryUsed = int64(val.used * 1024 * 1024)
+				pnodes[i].MemoryTotal = int64(val.total * 1024 * 1024)
+			}
 		}
 	}
 
