@@ -27,11 +27,14 @@ func NewFirebaseService(cfg *config.Config) (*FirebaseService, error) {
 	ctx := context.Background()
 	conf := &firebase.Config{ProjectID: cfg.FirebaseProjectID}
 
+	// Sanitize private key (remove quotes if present from env var)
+	privateKey := strings.Trim(cfg.FirebasePrivateKey, "\"")
+
 	// Create credentials from env vars
 	creds := option.WithCredentialsJSON([]byte(`{
 		"type": "service_account",
 		"project_id": "` + cfg.FirebaseProjectID + `",
-		"private_key": "` + cfg.FirebasePrivateKey + `",
+		"private_key": "` + privateKey + `",
 		"client_email": "` + cfg.FirebaseClientEmail + `",
 		"auth_uri": "https://accounts.google.com/o/oauth2/auth",
 		"token_uri": "https://oauth2.googleapis.com/token",
@@ -48,6 +51,7 @@ func NewFirebaseService(cfg *config.Config) (*FirebaseService, error) {
 		return nil, err
 	}
 
+	log.Printf("Firebase initialized successfully for project: %s", cfg.FirebaseProjectID)
 	return &FirebaseService{client: client}, nil
 }
 
@@ -156,6 +160,8 @@ func (fs *FirebaseService) SavePNodesBatch(ctx context.Context, pnodes []models.
 			if _, err := batch.Commit(ctx); err != nil {
 				log.Printf("Failed to commit batch %d: %v", i/batchSize, err)
 				// Continue to next batch instead of failing everything
+			} else {
+				log.Printf("Successfully saved batch of %d pNodes to Firestore", batchCount)
 			}
 		}
 	}
@@ -230,6 +236,9 @@ func (fs *FirebaseService) PruneOldNodes(ctx context.Context, maxAge time.Durati
 	}
 
 	_, err = batch.Commit(ctx)
+	if err == nil {
+		log.Printf("Successfully pruned %d old nodes from Firestore", len(docs))
+	}
 	return err
 }
 
@@ -239,6 +248,9 @@ func (fs *FirebaseService) SaveNetworkSnapshot(ctx context.Context, snapshot *mo
 	}
 
 	_, err := fs.client.Collection("network_snapshots").Doc("latest").Set(ctx, snapshot)
+	if err == nil {
+		log.Println("Successfully saved network snapshot to Firestore")
+	}
 	return err
 }
 
