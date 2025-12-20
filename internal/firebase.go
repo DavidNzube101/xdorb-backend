@@ -51,6 +51,16 @@ func NewFirebaseService(cfg *config.Config) (*FirebaseService, error) {
 		return nil, err
 	}
 
+	// Verify connection by attempting to fetch a doc (timeout 10s)
+	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if _, err := client.Collection("network_snapshots").Doc("latest").Get(verifyCtx); err != nil {
+		// Ignore "NotFound" error, but report others
+		if !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "not found") {
+			log.Printf("Warning: Firebase connection test failed: %v", err)
+		}
+	}
+
 	log.Printf("Firebase initialized successfully for project: %s", cfg.FirebaseProjectID)
 	return &FirebaseService{client: client}, nil
 }

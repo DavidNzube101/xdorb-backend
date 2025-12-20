@@ -550,32 +550,41 @@ func (c *Client) GetPNodePeers(id string) ([]models.PeerInfo, error) {
 	return peers, nil
 }
 
-// GetLeaderboard fetches top performing pNodes
+// GetLeaderboard fetches top performing pNodes using real data
 func (c *Client) GetLeaderboard(metric string, limit int) ([]models.PNode, error) {
-	// Mock data - replace with actual pRPC call
-	var leaderboard []models.PNode
-
-	for i := 0; i < limit; i++ {
-		pnode := models.PNode{
-			ID:              fmt.Sprintf("top-pnode-%d", i+1),
-			Name:            fmt.Sprintf("Top Node %d", i+1),
-			Status:          "active",
-			Uptime:          99.0 - float64(i)*0.5, // Decreasing uptime
-			Latency:         10 + i*2,
-			Validations:     10000 - i*100,
-			Rewards:         1000.0 - float64(i)*50.0,
-			Location:        "Various",
-			Region:          "Global",
-			StorageUsed:     int64(800+i*10) * 1024 * 1024 * 1024,
-			StorageCapacity: 1000 * 1024 * 1024 * 1024,
-			LastSeen:        time.Now().Add(-time.Duration(i) * time.Minute),
-			Performance:     0.95 - float64(i)*0.01,
-			Stake:           10000.0 - float64(i)*500.0,
-			RiskScore:       float64(i) * 5.0,
-		}
-		leaderboard = append(leaderboard, pnode)
+	// Fetch all nodes
+	allNodes, err := c.GetPNodes(&PNodeFilters{Limit: 1000})
+	if err != nil {
+		return nil, err
 	}
 
+	// Sort based on metric
+	sort.Slice(allNodes, func(i, j int) bool {
+		switch metric {
+		case "uptime":
+			return allNodes[i].Uptime > allNodes[j].Uptime
+		case "latency":
+			// Lower is better for latency, but 0 usually means invalid/timeout
+			if allNodes[i].Latency == 0 { return false }
+			if allNodes[j].Latency == 0 { return true }
+			return allNodes[i].Latency < allNodes[j].Latency
+		case "rewards":
+			return allNodes[i].Rewards > allNodes[j].Rewards
+		case "performance":
+			return allNodes[i].Performance > allNodes[j].Performance
+		case "xdn":
+			fallthrough
+		default:
+			return allNodes[i].XDNScore > allNodes[j].XDNScore
+		}
+	})
+
+	// Slice top N
+	if limit > len(allNodes) {
+		limit = len(allNodes)
+	}
+	
+	leaderboard := allNodes[:limit]
 	logrus.Debugf("Fetched leaderboard with %d entries for metric %s", len(leaderboard), metric)
 	return leaderboard, nil
 }
