@@ -4,7 +4,7 @@
 
 # Deployment Guide
 
-Find this guide-as-an-article on the deployment and usage of the platform [here](https://medium.com/@davidnzube/xdorb-analytics-platform-for-xandeum-network-9d3bba499db0)
+Find this guide-as-an-article on the deployment and usage of the platform [here](https://medium.com/@davidnzube/xdorb-analytics-platform-for-xandeum-network-9d3bba499db0). Also see [here](https://xdorb.vercel.app/docs)
 
 # Access
 
