@@ -11,6 +11,7 @@ type PNode struct {
 	Latency         int       `json:"latency"` // milliseconds
 	Validations     int       `json:"validations"`
 	Rewards         float64   `json:"rewards"`
+	Credits         float64   `json:"credits"` // New credits field
 	Location        string    `json:"location"`
 	Region          string    `json:"region"`
 	Lat             float64   `json:"lat"`

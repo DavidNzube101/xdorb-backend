@@ -260,6 +260,9 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 		// Continue without registration data if there's an error, but log it
 	}
 
+	// Fetch Pod Credits
+	creditsMap, _ := h.getCreditsMap()
+
 	// Fetch latest snapshot for CPU/RAM enrichment (Best effort)
 	var cpuMap map[string]float64
 	var ramMap map[string]struct{ used, total float64 }
@@ -286,6 +289,13 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 			pnodes[i].Registered = true
 		} else {
 			pnodes[i].Registered = false
+		}
+
+		// Credits Enrichment
+		if creditsMap != nil {
+			if val, ok := creditsMap[pnodes[i].ID]; ok {
+				pnodes[i].Credits = val
+			}
 		}
 
 		// Stats Enrichment (if snapshot available)
@@ -1795,7 +1805,54 @@ func (h *Handler) GetRegistrationInfo(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusNotFound, models.APIResponse{
-		Error: "Registration information not found for this node.",
-	})
-}
+	        c.JSON(http.StatusNotFound, models.APIResponse{
+	                Error: "Registration information not found for this node.",
+	        })
+	}
+	
+	// getCreditsMap fetches pod credits from external API (Mainnet & Devnet)
+	func (h *Handler) getCreditsMap() (map[string]float64, error) {
+		cacheKey := "pod_credits_map"
+		
+		// Try cache
+		if cached, err := h.cache.Get(cacheKey); err == nil {
+			var credits map[string]float64
+			if err := cached.Unmarshal(&credits); err == nil {
+				return credits, nil
+			}
+		}
+	
+		creditsMap := make(map[string]float64)
+		urls := []string{
+			"https://podcredits.xandeum.network/api/pods-credits",        // Mainnet
+			"https://podcredits.xandeum.network/api/devnet-pod-credits", // Devnet
+		}
+	
+		for _, url := range urls {
+			resp, err := http.Get(url)
+			if err != nil {
+				logrus.Warnf("Failed to fetch credits from %s: %v", url, err)
+				continue
+			}
+			defer resp.Body.Close()
+	
+			var creds struct {
+				PodsCredits []struct {
+					Credits float64 `json:"credits"`
+					PodID   string  `json:"pod_id"`
+				} `json:"pods_credits"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&creds); err != nil {
+				logrus.Warnf("Failed to decode credits from %s: %v", url, err)
+				continue
+			}
+	
+			for _, pc := range creds.PodsCredits {
+				creditsMap[pc.PodID] = pc.Credits
+			}
+		}
+	
+		// Cache for 10 minutes
+		h.cache.Set(cacheKey, creditsMap, 10*time.Minute)
+		return creditsMap, nil
+	}
