@@ -67,10 +67,13 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 		{Command: "pnode", Description: "Get detailed pNode info"},
 		{Command: "xdn_score", Description: "Quick XDN Score view"},
 		{Command: "leaderboard", Description: "Show top pNodes leaderboard"},
+		{Command: "operators", Description: "List top pNode operators"},
 		{Command: "network", Description: "Show network overview"},
-		{Command: "search", Description: "Find pNodes by region"},
-		{Command: "ai_summary", Description: "Get AI-powered insights (network or specific pNode)"},
-		{Command: "compare", Description: "Compare two pNodes (add 'smart' for AI analysis)"},
+		{Command: "search", Description: "Find pNodes in a region"},
+		{Command: "region_summary", Description: "AI analysis of a region"},
+		{Command: "stoinc", Description: "Learn about STOINC rewards"},
+		{Command: "ai_summary", Description: "Get AI insights"},
+		{Command: "compare", Description: "Compare pNodes (supports fleet)"},
 		{Command: "catacombs", Description: "View historical pNodes (resting in peace)"},
 		{Command: "aggregate_analysis", Description: "Start background aggregation (Admin)"},
 		{Command: "agg_status", Description: "Check aggregation job status"},
@@ -135,6 +138,12 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		response = b.handleLeaderboard(text)
 	case strings.HasPrefix(text, "/network"):
 		response = b.handleNetwork()
+	case strings.HasPrefix(text, "/operators"):
+		response = b.handleOperators()
+	case strings.HasPrefix(text, "/region_summary "):
+		response = b.handleRegionSummary(text)
+	case strings.HasPrefix(text, "/stoinc"):
+		response = b.handleSTOINC()
 	case strings.HasPrefix(text, "/search "):
 		response = b.handleSearch(text)
 	case strings.HasPrefix(text, "/ai_summary"):
@@ -334,11 +343,76 @@ func (b *Bot) apiGetRegistrationInfo(id string) (map[string]string, error) {
 	return apiResp.Data, nil
 }
 
-func (b *Bot) apiCompareNodes(node1, node2 *models.PNode) (string, error) {
+func (b *Bot) apiGetOperators() ([]models.Operator, error) {
+	url := fmt.Sprintf("%s/api/operators", b.config.BackendURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp struct {
+		Data  []models.Operator `json:"data"`
+		Error string            `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Error != "" {
+		return nil, fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data, nil
+}
+
+func (b *Bot) apiGetRegionSummary(region string) (string, error) {
+	url := fmt.Sprintf("%s/api/network/region/%s/summary", b.config.BackendURL, strings.ReplaceAll(region, " ", "%20"))
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var apiResp struct {
+		Data  map[string]string `json:"data"`
+		Error string            `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", err
+	}
+	if apiResp.Error != "" {
+		return "", fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data["summary"], nil
+}
+
+func (b *Bot) apiCompareNodes(nodes []models.PNode) (string, error) {
 	url := fmt.Sprintf("%s/api/ai/compare-nodes", b.config.BackendURL)
 	payload := map[string]interface{}{
-		"node1": node1,
-		"node2": node2,
+		"nodes": nodes,
 	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -426,15 +500,17 @@ I provide real-time analytics for Xandeum pNodes. Here's what I can do:
 *Available Commands:*
 /start - Welcome message and overview
 /help - Show this help message
-/list_pnodes [limit] - List top pNodes by XDN Score (default 10, max 20)
-/pnode <id> - Get detailed information about a specific pNode
-/xdn_score <id> - Quick view of XDN Score with formula breakdown
-/leaderboard [limit] - Show top pNodes leaderboard (alias for /list_pnodes)
-/network - Show network overview statistics
-/search <region> - Find pNodes in a specific region
-/ai_summary [pnode_id] - Get AI-powered insights (network or specific pNode)
-/compare <id1> <id2> [smart] - Compare two pNodes (add 'smart' for AI analysis)
-/catacombs [limit] - View historical pNodes from the catacombs (default 10, max 20)
+/list_pnodes [limit] - Top pNodes by XDN (max 20)
+/pnode <id> - Detailed pNode information
+/operators - View top fleet managers
+/leaderboard - Alias for /list_pnodes
+/network - Network overview statistics
+/search <region> - Find nodes in a region
+/region_summary <region> - AI analysis of a sector
+/stoinc - Learn about STOINC rewards
+/ai_summary [id] - Get AI insights
+/compare <id1> <id2>... [smart] - Fleet comparison
+/catacombs [limit] - Historical pNodes (max 20)
 
 _Data is fetched live from the Xandeum network._`
 }
@@ -445,29 +521,27 @@ func (b *Bot) handleHelp() string {
 
 /start - Welcome message and overview
 /help - Show this help message
-/list_pnodes [limit] - List top pNodes by XDN Score (default 10, max 20)
-/pnode <id> - Get detailed information about a specific pNode
-/xdn_score <id> - Quick view of XDN Score with formula breakdown
-/leaderboard [limit] - Show top pNodes leaderboard (alias for /list_pnodes)
-/network - Show network overview statistics
-/search <region> - Find pNodes in a specific region
-/ai_summary [pnode_id] - Get AI-powered insights (network or specific pNode)
-/compare <id1> <id2> [smart] - Compare two pNodes (add 'smart' for AI analysis)
-/catacombs [limit] - View historical pNodes from the catacombs (default 10, max 20)
+/list_pnodes [limit] - Top pNodes by XDN (max 20)
+/pnode <id> - Detailed pNode information
+/operators - View top fleet managers
+/leaderboard - Alias for /list_pnodes
+/network - Network overview statistics
+/search <region> - Find nodes in a region
+/region_summary <region> - AI analysis of a sector
+/stoinc - Learn about STOINC rewards
+/ai_summary [id] - Get AI insights
+/compare <id1> <id2>... [smart] - Fleet comparison
+/catacombs [limit] - Historical pNodes (max 20)
 
 *Examples:*
-/list_pnodes 5
 /pnode abc123
-/xdn_score def456
+/operators
 /search Europe
-/network
-/compare abc123 def456
+/region_summary Grand-Est
 /compare abc123 def456 smart
-/catacombs 5
-/ai_summary
 /ai_summary abc123
 
-_Data is fetched in real-time from the Xandeum network._`
+_Data is fetched live from the Xandeum network._`
 }
 
 // handleListPNodes handles the /list_pnodes command
@@ -540,8 +614,8 @@ func (b *Bot) handleListPNodes(text string) string {
 	for i, pnode := range leaderboard {
 		medal := getMedal(i + 1)
 		status := getStatusEmoji(pnode.Status)
-		response.WriteString(fmt.Sprintf("%s `%s` - %.1f XDN (%s %s, %.1f%% uptime)\n",
-			medal, pnode.ID, pnode.XDNScore, status, pnode.Status, pnode.Uptime))
+		response.WriteString(fmt.Sprintf("%s `%s` - %.1f XDN (%s %s, %s uptime, %s credits)\n",
+			medal, pnode.ID, pnode.XDNScore, status, pnode.Status, formatUptime(pnode.Uptime), formatNumber(pnode.Credits)))
 	}
 
 	response.WriteString("\n_Data fetched live from Xandeum network_")
@@ -586,7 +660,8 @@ func (b *Bot) handlePNode(text string) string {
 	response := fmt.Sprintf(`📊 *pNode: %s*
 
 • *Status:* %s %s
-• *Uptime:* %.1f%%
+• *Credits:* %s ⭐️
+• *Uptime:* %s
 • *Latency:* %dms
 • *Stake:* %s
 • *Risk Score:* %.1f
@@ -596,10 +671,11 @@ func (b *Bot) handlePNode(text string) string {
 • *Storage:* %s / %s
 • *Last Seen:* %s%s
 
-_XDN Formula: (stake × 0.4) + (uptime × 0.3) + ((100 - latency) × 0.2) + ((100 - risk) × 0.1)_`,
+_XDN Formula: (stake × 0.4) + (uptime%% × 0.3) + ((100 - latency) × 0.2) + ((100 - risk) × 0.1)_`,
 		pnode.ID,
 		status, pnode.Status,
-		pnode.Uptime,
+		formatNumber(pnode.Credits),
+		formatUptime(pnode.Uptime),
 		pnode.Latency,
 		formatNumber(pnode.Stake),
 		pnode.RiskScore,
@@ -635,8 +711,11 @@ func (b *Bot) handleXDNScore(text string) string {
 	}
 
 	// Calculate components
+    uptimePercent := pnode.Uptime / 86400 * 100
+    if uptimePercent > 100 { uptimePercent = 100 }
+
 	stakeComponent := pnode.Stake * 0.4
-	uptimeComponent := pnode.Uptime * 0.3
+	uptimeComponent := uptimePercent * 0.3
 	latencyComponent := (100.0 - float64(pnode.Latency)) * 0.2
 	if latencyComponent < 0 {
 		latencyComponent = 0
@@ -655,15 +734,15 @@ func (b *Bot) handleXDNScore(text string) string {
 
 *Breakdown:*
 • Stake (40%%): %.1f × 0.4 = %.1f
-• Uptime (30%%): %.1f × 0.3 = %.1f
+• Uptime (30%%): %.1f%% (from %s) × 0.3 = %.1f
 • Latency (20%%): (100 - %d) × 0.2 = %.1f
 • Risk Score (10%%): (100 - %.1f) × 0.1 = %.1f
 
-*Formula:* (stake × 0.4) + (uptime × 0.3) + ((100 - latency) × 0.2) + ((100 - risk) × 0.1)`,
+*Formula:* (stake × 0.4) + (uptime%% × 0.3) + ((100 - latency) × 0.2) + ((100 - risk) × 0.1)`,
 		pnode.ID,
 		totalScore,
 		pnode.Stake, stakeComponent,
-		pnode.Uptime, uptimeComponent,
+		uptimePercent, formatUptime(pnode.Uptime), uptimeComponent,
 		pnode.Latency, latencyComponent,
 		pnode.RiskScore, riskComponent)
 
@@ -754,8 +833,8 @@ func (b *Bot) handleSearch(text string) string {
 
 	for i, pnode := range matchingNodes {
 		status := getStatusEmoji(pnode.Status)
-		response.WriteString(fmt.Sprintf("%d. `%s` - %.1f XDN (%s %.1f%% uptime)\n",
-			i+1, pnode.ID, pnode.XDNScore, status, pnode.Uptime))
+		response.WriteString(fmt.Sprintf("%d. `%s` - %.1f XDN (%s %s uptime)\n",
+			i+1, pnode.ID, pnode.XDNScore, status, formatUptime(pnode.Uptime)))
 	}
 
 	response.WriteString("\n_Use /pnode <id> for detailed info_")
@@ -1151,52 +1230,156 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+func formatUptime(seconds float64) string {
+	if seconds <= 0 {
+		return "0s"
+	}
+
+	if seconds < 60 {
+		return fmt.Sprintf("%.0fs", seconds)
+	}
+
+	d := int(seconds) / (3600 * 24)
+	h := (int(seconds) % (3600 * 24)) / 3600
+	m := (int(seconds) % 3600) / 60
+
+	var parts []string
+	if d > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", d))
+	}
+	if h > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", h))
+	}
+	if m > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", m))
+	}
+
+	if len(parts) == 0 {
+		return fmt.Sprintf("%.0fs", seconds)
+	}
+	return strings.Join(parts, " ")
+}
+
 // handleCompare handles the /compare command
 func (b *Bot) handleCompare(text string) string {
 	parts := strings.Fields(text)
 	if len(parts) < 3 {
-		return "❌ Please provide two pNode IDs. Usage: /compare <id1> <id2> [smart]"
+		return "❌ Please provide at least two pNode IDs. Usage: /compare <id1> <id2> ... [smart]"
 	}
 
-	id1 := parts[1]
-	id2 := parts[2]
-	isSmart := len(parts) > 3 && strings.ToLower(parts[3]) == "smart"
-
-	// Get both pNodes
-	pnode1, err := b.apiGetPNodeByID(id1)
-	if err != nil {
-		logrus.Errorf("Failed to get pNode %s: %v", id1, err)
-		return fmt.Sprintf("❌ Failed to fetch data for pNode %s. Please check the ID and try again.", id1)
-	}
-	if pnode1 == nil || pnode1.ID == "" {
-		return fmt.Sprintf("❌ pNode %s not found in the network.", id1)
+	var ids []string
+	isSmart := false
+	for _, part := range parts[1:] {
+		if strings.ToLower(part) == "smart" {
+			isSmart = true
+			continue
+		}
+		ids = append(ids, part)
 	}
 
-	pnode2, err := b.apiGetPNodeByID(id2)
-	if err != nil {
-		logrus.Errorf("Failed to get pNode %s: %v", id2, err)
-		return fmt.Sprintf("❌ Failed to fetch data for pNode %s. Please check the ID and try again.", id2)
+	if len(ids) < 2 {
+		return "❌ Please provide at least two pNode IDs for comparison."
 	}
-	if pnode2 == nil || pnode2.ID == "" {
-		return fmt.Sprintf("❌ pNode %s not found in the network.", id2)
+	if len(ids) > 10 {
+		ids = ids[:10] // Limit to 10 nodes
+	}
+
+	var nodes []models.PNode
+	for _, id := range ids {
+		pnode, err := b.apiGetPNodeByID(id)
+		if err != nil {
+			logrus.Errorf("Failed to get pNode %s: %v", id, err)
+			continue
+		}
+		if pnode != nil && pnode.ID != "" {
+			nodes = append(nodes, *pnode)
+		}
+	}
+
+	if len(nodes) < 2 {
+		return "❌ Failed to fetch enough nodes for comparison. Please check the IDs."
 	}
 
 	if isSmart {
 		// Use AI comparison
-		comparison, err := b.apiCompareNodes(pnode1, pnode2)
+		comparison, err := b.apiCompareNodes(nodes)
 		if err != nil {
 			logrus.Errorf("Failed to compare nodes: %v", err)
 			return "❌ Failed to generate AI comparison. Please try again later."
 		}
-		return fmt.Sprintf(`🤖 *AI Comparison: %s vs %s*
+		return fmt.Sprintf(`🤖 *AI Fleet Analysis: %d Nodes*
 
 %s
 
-_Analysis based on real-time network data_`, pnode1.ID, pnode2.ID, comparison)
+_Analysis based on real-time network data_`, len(nodes), comparison)
 	} else {
-		// Normal comparison
-		return b.generateNormalComparison(pnode1, pnode2)
+		// Normal comparison (just first two for standard table view)
+		return b.generateNormalComparison(&nodes[0], &nodes[1])
 	}
+}
+
+// handleOperators handles the /operators command
+func (b *Bot) handleOperators() string {
+	operators, err := b.apiGetOperators()
+	if err != nil {
+		logrus.Errorf("Failed to get operators: %v", err)
+		return "❌ Failed to fetch operator data. Please try again later."
+	}
+
+	if len(operators) == 0 {
+		return "📊 No operator data available."
+	}
+
+	var response strings.Builder
+	response.WriteString("👥 *Top 10 pNode Operators*\n\n")
+
+	for i, op := range operators {
+		if i >= 10 { break }
+		response.WriteString(fmt.Sprintf("%d. `%s...` - *%d* nodes (%d registered)\n",
+			i+1, op.Manager[:12], op.Owned, op.Registered))
+	}
+
+	response.WriteString("\n_Managers ranking by fleet size_")
+	return response.String()
+}
+
+// handleRegionSummary handles the /region_summary command
+func (b *Bot) handleRegionSummary(text string) string {
+	parts := strings.Fields(text)
+	if len(parts) < 2 {
+		return "❌ Please provide a region. Usage: /region_summary <region>"
+	}
+
+	region := strings.Join(parts[1:], " ")
+	summary, err := b.apiGetRegionSummary(region)
+	if err != nil {
+		logrus.Errorf("Failed to get region summary: %v", err)
+		return fmt.Sprintf("❌ Failed to generate AI summary for region '%s'.", region)
+	}
+
+	return fmt.Sprintf(`🤖 *AI Region Analysis: %s*
+
+%s
+
+_Analysis based on real-time sectoral data_`, region, summary)
+}
+
+// handleSTOINC returns information about STOINC
+func (b *Bot) handleSTOINC() string {
+	return `🧮 *STOINC: Storage Income*
+
+Storage Income (STOINC) is the core incentive mechanism of the Xandeum network. It rewards pNode operators for providing scalable storage capacity.
+
+*How it works:*
+pNodes earn credits by successfully processing data packets and maintaining high uptime. These credits determine their share of the network's storage fees.
+
+*Formula:*
+` + "```" + `
+Boosted Weight = (pNodes × Storage × Performance) × (Era Boost × NFT Boost)
+STOINC Share = (Boosted Weight / Total Network Credits) × Network Fees
+` + "```" + `
+
+_Visit the dashboard for a full interactive calculator._`
 }
 
 // generateNormalComparison generates a text table comparison
