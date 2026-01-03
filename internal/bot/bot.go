@@ -63,7 +63,7 @@ func NewBot(cfg *config.Config) (*Bot, error) {
 	commands := []tgbotapi.BotCommand{
 		{Command: "start", Description: "Welcome message and overview"},
 		{Command: "help", Description: "Show all available commands"},
-		{Command: "list_pnodes", Description: "List top pNodes by XDN Score"},
+		{Command: "list_pnodes", Description: "Top pNodes by XDN (e.g., /list_pnodes 10 mainnet)"},
 		{Command: "pnode", Description: "Get detailed pNode info"},
 		{Command: "xdn_score", Description: "Quick XDN Score view"},
 		{Command: "leaderboard", Description: "Show top pNodes leaderboard"},
@@ -484,6 +484,39 @@ func (b *Bot) apiGetNetworkSummary() (string, error) {
 	return apiResp.Data["summary"], nil
 }
 
+func (b *Bot) apiGetLeaderboard(limit int, network string) ([]models.PNode, error) {
+	url := fmt.Sprintf("%s/api/leaderboard?limit=%d&network=%s", b.config.BackendURL, limit, network)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.config.BotAPIKey != "" {
+		req.Header.Set("Authorization", b.config.BotAPIKey)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp struct {
+		Data  []models.PNode `json:"data"`
+		Error string         `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Error != "" {
+		return nil, fmt.Errorf(apiResp.Error)
+	}
+	return apiResp.Data, nil
+}
+
 // handleStart returns the welcome message
 func (b *Bot) handleStart() string {
 	return `🤖 *Welcome to XDOrb Analytics Bot!*
@@ -500,7 +533,7 @@ I provide real-time analytics for Xandeum pNodes. Here's what I can do:
 *Available Commands:*
 /start - Welcome message and overview
 /help - Show this help message
-/list_pnodes [limit] - Top pNodes by XDN (max 20)
+/list_pnodes [limit] [network] - Top pNodes by XDN (e.g., /list_pnodes 10 mainnet)
 /pnode <id> - Detailed pNode information
 /operators - View top fleet managers
 /leaderboard - Alias for /list_pnodes
@@ -521,7 +554,7 @@ func (b *Bot) handleHelp() string {
 
 /start - Welcome message and overview
 /help - Show this help message
-/list_pnodes [limit] - Top pNodes by XDN (max 20)
+/list_pnodes [limit] [network] - Top pNodes by XDN (e.g., /list_pnodes 10 mainnet)
 /pnode <id> - Detailed pNode information
 /operators - View top fleet managers
 /leaderboard - Alias for /list_pnodes
@@ -547,6 +580,7 @@ _Data is fetched live from the Xandeum network._`
 // handleListPNodes handles the /list_pnodes command
 func (b *Bot) handleListPNodes(text string) string {
 	limit := 10 // default
+    network := "devnet" // default to devnet for bot
 
 	parts := strings.Fields(text)
 	if len(parts) > 1 {
@@ -554,67 +588,29 @@ func (b *Bot) handleListPNodes(text string) string {
 			limit = parsed
 		}
 	}
+    if len(parts) > 2 {
+        if strings.ToLower(parts[2]) == "mainnet" {
+            network = "mainnet"
+        }
+    }
 
-	// Get all pNodes to calculate leaderboard
-	allNodes, err := b.apiGetPNodes(1000)
+	leaderboard, err := b.apiGetLeaderboard(limit, network)
 	if err != nil {
-		logrus.Errorf("Failed to get pNodes: %v", err)
-		return "❌ Failed to fetch pNode data. Please try again later."
+		logrus.Errorf("Failed to get leaderboard: %v", err)
+		return "❌ Failed to fetch leaderboard data. Please try again later."
 	}
 
-	if len(allNodes) == 0 {
-		return "📊 No pNode data available at the moment. The network may be initializing."
-	}
-
-	// Calculate XDN scores (same logic as in handlers.go)
-	for i := range allNodes {
-		stake := allNodes[i].Stake
-		uptime := allNodes[i].Uptime
-		latency := allNodes[i].Latency
-		riskScore := allNodes[i].RiskScore
-
-		latencyScore := 100.0 - float64(latency)
-		if latencyScore < 0 {
-			latencyScore = 0
-		}
-
-		riskScoreNormalized := 100.0 - riskScore
-		if riskScoreNormalized < 0 {
-			riskScoreNormalized = 0
-		}
-
-		allNodes[i].XDNScore = (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
-	}
-
-	// Sort by XDN Score (descending), then by stake (descending) as secondary sort
-	for i := 0; i < len(allNodes)-1; i++ {
-		for j := i + 1; j < len(allNodes); j++ {
-			swap := false
-			if allNodes[i].XDNScore < allNodes[j].XDNScore {
-				swap = true
-			} else if allNodes[i].XDNScore == allNodes[j].XDNScore && allNodes[i].Stake < allNodes[j].Stake {
-				swap = true
-			}
-
-			if swap {
-				allNodes[i], allNodes[j] = allNodes[j], allNodes[i]
-			}
-		}
-	}
-
-	// Take top N nodes
-	leaderboard := allNodes
-	if len(leaderboard) > limit {
-		leaderboard = leaderboard[:limit]
+	if len(leaderboard) == 0 {
+		return "📊 No pNode data available for the leaderboard at the moment."
 	}
 
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("🏆 *Top %d pNodes by XDN Score*\n\n", len(leaderboard)))
+	response.WriteString(fmt.Sprintf("🏆 *Top %d pNodes by XDN Score (%s)*\n\n", len(leaderboard), strings.Title(network)))
 
 	for i, pnode := range leaderboard {
 		medal := getMedal(i + 1)
 		status := getStatusEmoji(pnode.Status)
-		response.WriteString(fmt.Sprintf("%s `%s` - %.1f XDN (%s %s, %s uptime, %s credits)\n",
+		response.WriteString(fmt.Sprintf("%s `%s` - *%.1f* XDN\n(%s %s, %s, %s credits)\n\n",
 			medal, pnode.ID, pnode.XDNScore, status, pnode.Status, formatUptime(pnode.Uptime), formatNumber(pnode.Credits)))
 	}
 
@@ -905,6 +901,9 @@ func (b *Bot) handleAISummaryForPNode(pnodeID string) string {
 		latency := networkNodes[i].Latency
 		riskScore := networkNodes[i].RiskScore
 
+        uptimePercent := uptime / 86400 * 100
+        if uptimePercent > 100 { uptimePercent = 100 }
+
 		latencyScore := 100.0 - float64(latency)
 		if latencyScore < 0 {
 			latencyScore = 0
@@ -915,7 +914,7 @@ func (b *Bot) handleAISummaryForPNode(pnodeID string) string {
 			riskScoreNormalized = 0
 		}
 
-		networkNodes[i].XDNScore = (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
+		networkNodes[i].XDNScore = (stake * 0.4) + (uptimePercent * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
 	}
 
 	// Sort network nodes by XDN score
@@ -1389,7 +1388,7 @@ func (b *Bot) generateNormalComparison(pnode1, pnode2 *models.PNode) string {
 		key    string
 		unit   string
 	}{
-		{"Uptime", "uptime", "%"},
+		{"Uptime", "uptime", ""},
 		{"Latency", "latency", "ms"},
 		{"XDN Score", "xdnScore", ""},
 		{"CPU", "cpuPercent", "%"},
@@ -1404,10 +1403,16 @@ func (b *Bot) generateNormalComparison(pnode1, pnode2 *models.PNode) string {
 
 	for _, data := range comparisonData {
 		var val1, val2 float64
+        var sVal1, sVal2 string
+        isString := false
+
 		switch data.key {
 		case "uptime":
-			val1 = pnode1.Uptime
-			val2 = pnode2.Uptime
+			sVal1 = formatUptime(pnode1.Uptime)
+			sVal2 = formatUptime(pnode2.Uptime)
+            val1 = pnode1.Uptime
+            val2 = pnode2.Uptime
+            isString = true
 		case "latency":
 			val1 = float64(pnode1.Latency)
 			val2 = float64(pnode2.Latency)
@@ -1425,19 +1430,23 @@ func (b *Bot) generateNormalComparison(pnode1, pnode2 *models.PNode) string {
 		winner := "Tie"
 		if data.key == "latency" {
 			if val1 < val2 {
-				winner = pnode1.ID[:12]
+				winner = pnode1.ID[:6]
 			} else if val2 < val1 {
-				winner = pnode2.ID[:12]
+				winner = pnode2.ID[:6]
 			}
 		} else {
 			if val1 > val2 {
-				winner = pnode1.ID[:12]
+				winner = pnode1.ID[:6]
 			} else if val2 > val1 {
-				winner = pnode2.ID[:12]
+				winner = pnode2.ID[:6]
 			}
 		}
 
-		response.WriteString(fmt.Sprintf("%-12s %-15.2f %-15.2f %-6s\n", data.metric, val1, val2, winner))
+        if isString {
+    		response.WriteString(fmt.Sprintf("%-12s %-15s %-15s %-6s\n", data.metric, sVal1, sVal2, winner))
+        } else {
+    		response.WriteString(fmt.Sprintf("%-12s %-15.2f %-15.2f %-6s\n", data.metric, val1, val2, winner))
+        }
 	}
 	response.WriteString("```\n")
 	response.WriteString("_Data fetched live from Xandeum network_")
@@ -1473,6 +1482,9 @@ func (b *Bot) handleCatacombs(text string) string {
 		latency := historicalNodes[i].Latency
 		riskScore := historicalNodes[i].RiskScore
 
+        uptimePercent := uptime / 86400 * 100
+        if uptimePercent > 100 { uptimePercent = 100 }
+
 		latencyScore := 100.0 - float64(latency)
 		if latencyScore < 0 {
 			latencyScore = 0
@@ -1483,7 +1495,7 @@ func (b *Bot) handleCatacombs(text string) string {
 			riskScoreNormalized = 0
 		}
 
-		historicalNodes[i].XDNScore = (stake * 0.4) + (uptime * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
+		historicalNodes[i].XDNScore = (stake * 0.4) + (uptimePercent * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
 	}
 
 	// Sort by XDN Score (descending)
