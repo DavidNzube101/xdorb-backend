@@ -58,11 +58,11 @@ Network Data:
 }
 
 
-func (c *Client) GenerateNodeComparison(node1, node2 *models.PNode) (string, error) {
+func (c *Client) GenerateFleetComparison(nodes []models.PNode) (string, error) {
 	ctx := context.Background()
 
 	// Helper to format node data into a string
-	formatNode := func(node *models.PNode) string {
+	formatNode := func(node models.PNode) string {
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("Name: %s\n", node.Name))
 		b.WriteString(fmt.Sprintf("Uptime: %.2f%%\n", node.Uptime))
@@ -74,38 +74,89 @@ func (c *Client) GenerateNodeComparison(node1, node2 *models.PNode) (string, err
 		return b.String()
 	}
 
+	var nodesData strings.Builder
+	for i, node := range nodes {
+		nodesData.WriteString(fmt.Sprintf("### Node %d Data:\n%s\n", i+1, formatNode(node)))
+	}
+
 	prompt := fmt.Sprintf(`
 You are an expert analyst for the Xandeum decentralized storage network.
-Analyze the following two pNodes and provide a comparison in markdown format.
+Analyze the following fleet of %d pNodes and provide a comparative analysis in markdown format.
 
-**Objective:** Determine which node is better for different use cases.
-
-**Node 1 Data:**
-%s
-
-**Node 2 Data:**
+**Fleet Data:**
 %s
 
 **Instructions:**
-1.  Start with a title: "### AI-Powered Comparison: [Node 1 Name] vs [Node 2 Name]".
-2.  Briefly state the main strength of each node in its own paragraph. For example: "**Node 1 ([Node 1 Name])** excels in..."
-3.  Provide a final "Recommendation" paragraph. State which node is better for specific tasks (e.g., high-frequency data access, long-term archival storage). Be decisive.
-4.  Keep the entire response concise and easy to read. Do not use more than four paragraphs in total.
-`, formatNode(node1), formatNode(node2))
+1.  Start with a title: "### AI Fleet Analysis: %d Nodes".
+2.  Identify the top performer in the group and explain why.
+3.  Note any regional or technical advantages observed in specific nodes.
+4.  Provide a final "Fleet Recommendation" on how to optimize this group of nodes.
+5.  Keep the entire response concise and insightful. Use bullet points for readability.
+`, len(nodes), nodesData.String(), len(nodes))
 
 	resp, err := c.model.GenerateContent(ctx, genai.Text(prompt))
 	if err != nil {
-		return "", fmt.Errorf("failed to generate content for node comparison: %w", err)
+		return "", fmt.Errorf("failed to generate content for fleet comparison: %w", err)
 	}
 
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("no content generated for node comparison")
+		return "", fmt.Errorf("no content generated for fleet comparison")
 	}
 
 	comparison, ok := resp.Candidates[0].Content.Parts[0].(genai.Text)
 	if !ok {
-		return "", fmt.Errorf("unexpected response format from API for node comparison")
+		return "", fmt.Errorf("unexpected response format from API for fleet comparison")
 	}
 
 	return string(comparison), nil
+}
+
+func (c *Client) GenerateRegionSummary(regionName string, nodes []models.PNode) (string, error) {
+	ctx := context.Background()
+
+	var nodesInfo strings.Builder
+	activeCount := 0
+	totalLatency := 0
+	for _, n := range nodes {
+		if n.Status == "active" {
+			activeCount++
+		}
+		totalLatency += n.Latency
+		nodesInfo.WriteString(fmt.Sprintf("- %s: Status=%s, Latency=%dms, XDN=%.1f\n", n.Name, n.Status, n.Latency, n.XDNScore))
+	}
+
+	avgLatency := 0.0
+	if len(nodes) > 0 {
+		avgLatency = float64(totalLatency) / float64(len(nodes))
+	}
+
+	prompt := fmt.Sprintf(`
+You are a network optimization AI for Xandeum. 
+Analyze the following node data for the "%s" region and provide a concise "Optimization Tip" (max 3 sentences).
+Focus on what operators in this specific region should do to improve their STOINC rewards.
+
+Region Stats:
+- Total Nodes: %d
+- Active Nodes: %d
+- Average Latency: %.1fms
+
+Node Details:
+%s
+`, regionName, len(nodes), activeCount, avgLatency, nodesInfo.String())
+
+	resp, err := c.model.GenerateContent(ctx, genai.Text(prompt))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate region summary: %w", err)
+	}
+
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return "", fmt.Errorf("no content generated for region summary")
+	}
+
+	summary, ok := resp.Candidates[0].Content.Parts[0].(genai.Text)
+	if !ok {
+		return "", fmt.Errorf("unexpected response format from API for region summary")
+	}
+
+	return string(summary), nil
 }

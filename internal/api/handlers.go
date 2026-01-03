@@ -20,6 +20,7 @@ import (
 	"xdorb-backend/internal/gemini"
 	"xdorb-backend/internal/models"
 	"xdorb-backend/internal/prpc"
+    "xdorb-backend/internal/websocket"
 	"xdorb-backend/pkg/middleware"
 
 	"github.com/gin-gonic/gin"
@@ -34,10 +35,11 @@ type Handler struct {
 	cache        *cache.Cache
 	firebase     *internal.FirebaseService
 	geminiClient *gemini.Client
+    hub          *websocket.Hub
 }
 
 // NewHandler creates a new handler instance
-func NewHandler(cfg *config.Config) *Handler {
+func NewHandler(cfg *config.Config, hub *websocket.Hub) *Handler {
 	firebase, _ := internal.NewFirebaseService(cfg) // Ignore error for now
 
 	geminiClient, err := gemini.NewClient(cfg.GeminiAPIKey)
@@ -51,6 +53,7 @@ func NewHandler(cfg *config.Config) *Handler {
 		cache:        cache.NewCache(cfg),
 		firebase:     firebase,
 		geminiClient: geminiClient,
+        hub:          hub,
 	}
 }
 
@@ -61,6 +64,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 
 	// Public API routes (no auth required)
 	r.GET("/api/jupiter/quote", h.GetQuote)
+    r.GET("/ws", h.HandleWebSocket)
 
 	// API v1 routes with authentication
 	v1 := r.Group("/api")
@@ -86,9 +90,16 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 		// Network
 		v1.GET("/network/heatmap", h.GetNetworkHeatmap)
 		v1.GET("/network/history", h.GetNetworkHistory)
+        v1.GET("/network/region/:region/summary", h.GetRegionSummary)
 
 		// Prices
 		v1.GET("/prices", h.GetPrices)
+
+        // Updates
+        v1.GET("/whats-new", h.GetWhatsNew)
+
+        // Operators
+        v1.GET("/operators", h.GetOperators)
 
 		// Analytics
 		v1.GET("/analytics", h.GetAnalytics)
@@ -137,6 +148,11 @@ func (h *Handler) HealthCheck(c *gin.Context) {
 	}
 
 	c.JSON(statusCode, health)
+}
+
+// HandleWebSocket handles websocket requests from the peer.
+func (h *Handler) HandleWebSocket(c *gin.Context) {
+    websocket.ServeWs(h.hub, c.Writer, c.Request)
 }
 
 // GetQuote proxies requests to the Jupiter Quote API
@@ -284,9 +300,10 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 
 	// Enrich the nodes
 	for i := range pnodes {
-		// Registration
-		if _, ok := registeredPNodes[pnodes[i].ID]; ok {
+		// Registration and Manager
+		if manager, ok := registeredPNodes[pnodes[i].ID]; ok {
 			pnodes[i].Registered = true
+            pnodes[i].Manager = manager
 		} else {
 			pnodes[i].Registered = false
 		}
@@ -383,7 +400,7 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 		}
 		// Region filter
 		if region != "" && region != "all" && node.Region != region {
-			continue
+			continue	
 		}
 		// Search filter (name or location)
 		if search != "" {
@@ -418,6 +435,51 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 			Limit: limit,
 		},
 	})
+}
+
+// BroadcastPNodesUpdate fetches fresh pNodes and broadcasts to all WebSocket clients
+func (h *Handler) BroadcastPNodesUpdate() {
+    pnodes, err := h.getGlobalPNodes()
+    if err != nil {
+        logrus.Warn("Background broadcast fetch failed:", err)
+        return
+    }
+
+    payload := map[string]interface{}{
+        "type":    "pnodes_update",
+        "payload": pnodes,
+    }
+
+    data, err := json.Marshal(payload)
+    if err != nil {
+        logrus.Warn("Failed to marshal broadcast payload:", err)
+        return
+    }
+
+    h.hub.Broadcast(data)
+}
+
+// BroadcastStatsUpdate fetches fresh dashboard stats and broadcasts to all WebSocket clients
+func (h *Handler) BroadcastStatsUpdate() {
+    // We can reuse the logic from GetDashboardStats but for broadcasting
+    stats, err := h.prpc.GetDashboardStats()
+    if err != nil {
+        logrus.Warn("Background stats broadcast fetch failed:", err)
+        return
+    }
+
+    payload := map[string]interface{}{
+        "type":    "stats_update",
+        "payload": stats,
+    }
+
+    data, err := json.Marshal(payload)
+    if err != nil {
+        logrus.Warn("Failed to marshal stats broadcast payload:", err)
+        return
+    }
+
+    h.hub.Broadcast(data)
 }
 
 // RefreshCache clears all cached data and fetches fresh pNodes
@@ -537,13 +599,14 @@ func (h *Handler) GetPNodeMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: pnode})
 }
 
-// enrichNode is a helper to add registration status to a node
-func enrichNode(node *models.PNode, registeredPNodes map[string]bool) *models.PNode {
+// enrichNode is a helper to add registration status and manager to a node
+func enrichNode(node *models.PNode, registeredPNodes map[string]string) *models.PNode {
 	if node == nil {
 		return nil
 	}
-	if _, ok := registeredPNodes[node.ID]; ok {
+	if manager, ok := registeredPNodes[node.ID]; ok {
 		node.Registered = true
+        node.Manager = manager
 	} else {
 		node.Registered = false
 	}
@@ -1000,6 +1063,54 @@ func (h *Handler) GetNetworkHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: history})
 }
 
+// GetRegionSummary returns an AI-generated summary for a specific region
+func (h *Handler) GetRegionSummary(c *gin.Context) {
+    regionName := c.Param("region")
+    if regionName == "" {
+        c.JSON(http.StatusBadRequest, models.APIResponse{Error: "Region name is required"})
+        return
+    }
+
+    if h.geminiClient == nil {
+		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+			Error: "The AI service is not configured on the backend.",
+		})
+		return
+	}
+
+    // Get all nodes
+    allNodes, err := h.getGlobalPNodes()
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, models.APIResponse{Error: "Failed to fetch node data"})
+        return
+    }
+
+    // Filter for region
+    var regionNodes []models.PNode
+    for _, n := range allNodes {
+        if n.Region == regionName {
+            regionNodes = append(regionNodes, n)
+        }
+    }
+
+    if len(regionNodes) == 0 {
+        c.JSON(http.StatusNotFound, models.APIResponse{Error: "No nodes found in this region"})
+        return
+    }
+
+    summary, err := h.geminiClient.GenerateRegionSummary(regionName, regionNodes)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, models.APIResponse{Error: fmt.Sprintf("AI analysis failed: %v", err)})
+        return
+    }
+
+    c.JSON(http.StatusOK, models.APIResponse{
+        Data: map[string]string{
+            "summary": summary,
+        },
+    })
+}
+
 // GetPrices returns current crypto prices
 func (h *Handler) GetPrices(c *gin.Context) {
 	cacheKey := "prices:xand"
@@ -1104,6 +1215,130 @@ func (h *Handler) GetPrices(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: prices})
 }
 
+// GetWhatsNew returns the latest features and updates
+func (h *Handler) GetWhatsNew(c *gin.Context) {
+    updates := models.WhatsNew{
+        ID:      "jan-2026-update-v1",
+        Version: "1.1.0",
+        Updates: []models.FeatureUpdate{
+            {
+                Title:       "Real-time WebSocket Data",
+                Description: "Experience instant network updates without page refreshes. pNodes and dashboard stats now stream live.",
+                Icon:        "zap",
+            },
+            {
+                Title:       "Network Operators & Fleet Management",
+                Description: "Analyze managers and their pNode fleets. New paginated directory with detailed pNode modals.",
+                Icon:        "users",
+            },
+            {
+                Title:       "Interactive STOINC Calculator",
+                Description: "Project your potential earnings with our new 4-step carousel calculator. Export results to styled PDF.",
+                Icon:        "calculator",
+            },
+            {
+                Title:       "Multi-Node Fleet Comparison",
+                Description: "Compare up to 10 nodes side-by-side with AI-powered performance analysis.",
+                Icon:        "bar-chart",
+            },
+            {
+                Title:       "Dynamic Regional Inspection",
+                Description: "Deep dive into specific geographical sectors with focused heatmaps and AI-generated regional summaries.",
+                Icon:        "globe",
+            },
+        },
+    }
+
+    c.JSON(http.StatusOK, models.APIResponse{Data: updates})
+}
+
+// GetOperators aggregates operator data from the CSV
+func (h *Handler) GetOperators(c *gin.Context) {
+    cacheKey := "operators:data:v3"
+
+    // Try cache first
+    if cached, err := h.cache.Get(cacheKey); err == nil {
+        var operators []models.Operator
+        if err := cached.Unmarshal(&operators); err == nil {
+            // Ensure PNodes is not nil for each operator
+            for i := range operators {
+                if operators[i].PNodes == nil {
+                    operators[i].PNodes = []string{}
+                }
+            }
+            c.JSON(http.StatusOK, models.APIResponse{Data: operators})
+            return
+        }
+    }
+
+    // Read the CSV file
+    records, err := h.readCSVFile("pnodes-data-2025-12-11.csv")
+    if err != nil {
+        logrus.Error("Failed to read operators CSV file:", err)
+        c.JSON(http.StatusInternalServerError, models.APIResponse{
+            Error: "Could not read operator data.",
+        })
+        return
+    }
+
+    operatorMap := make(map[string]*models.Operator)
+
+    // CSV format: Index, pNode Identity Pubkey, Manager, Registered Time, Version
+    for i, row := range records {
+        if i == 0 { // Skip header
+            continue
+        }
+        if len(row) < 3 {
+            continue
+        }
+
+        manager := strings.TrimSpace(row[2])
+        if manager == "" {
+            continue
+        }
+
+        if _, exists := operatorMap[manager]; !exists {
+            operatorMap[manager] = &models.Operator{
+                Manager:    manager,
+                Owned:      0,
+                Registered: 0,
+                PNodes:     []string{},
+            }
+        }
+
+        op := operatorMap[manager]
+        op.Owned++
+        
+        // Collect pNode ID (column index 1)
+        if len(row) > 1 {
+            op.PNodes = append(op.PNodes, strings.TrimSpace(row[1]))
+        }
+
+        // Check if Registered Time is present and not empty
+        if len(row) > 3 && strings.TrimSpace(row[3]) != "" {
+            op.Registered++
+        }
+    }
+
+    // Convert map to slice
+    var operators []models.Operator
+    for _, op := range operatorMap {
+        operators = append(operators, *op)
+    }
+
+    // Sort by owned count (descending)
+    sort.Slice(operators, func(i, j int) bool {
+        return operators[i].Owned > operators[j].Owned
+    })
+
+    // Cache the result for 1 hour
+    if err := h.cache.Set(cacheKey, operators, 1*time.Hour); err != nil {
+        logrus.Warn("Failed to cache operators data:", err)
+    }
+
+    c.JSON(http.StatusOK, models.APIResponse{Data: operators})
+}
+
 // GetAnalytics returns network analytics
 func (h *Handler) GetAnalytics(c *gin.Context) {
 	simulatedStr := c.DefaultQuery("simulated", "false")
@@ -1182,15 +1417,15 @@ func (h *Handler) GetHistoricalPNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Data: pnodes})
 }
 
-// getRegisteredPNodesSet reads the CSV file and returns a set of registered pubkeys for efficient lookup
-func (h *Handler) getRegisteredPNodesSet() (map[string]bool, error) {
-	cacheKey := "pnodes:registered_set"
+// getRegisteredPNodesSet reads the CSV file and returns a map of registered pubkeys to their managers
+func (h *Handler) getRegisteredPNodesSet() (map[string]string, error) {
+	cacheKey := "pnodes:registered_map:v2"
 
 	// Try cache first
 	if cached, err := h.cache.Get(cacheKey); err == nil {
-		var registeredSet map[string]bool
-		if err := cached.Unmarshal(&registeredSet); err == nil {
-			return registeredSet, nil
+		var registeredMap map[string]string
+		if err := cached.Unmarshal(&registeredMap); err == nil {
+			return registeredMap, nil
 		}
 	}
 
@@ -1200,21 +1435,24 @@ func (h *Handler) getRegisteredPNodesSet() (map[string]bool, error) {
 		return nil, fmt.Errorf("failed to read CSV file: %w", err)
 	}
 
-	registeredSet := make(map[string]bool)
-	// Check if pubkey exists in the CSV (column index 1 is "pNode Identity Pubkey")
-	for _, row := range file {
-		if len(row) > 1 && strings.TrimSpace(row[1]) != "" {
+	registeredMap := make(map[string]string)
+	// Check if pubkey exists in the CSV
+    // Index, pNode Identity Pubkey (1), Manager (2), Registered Time (3), Version (4)
+	for i, row := range file {
+        if i == 0 { continue } // Skip header
+		if len(row) > 2 && strings.TrimSpace(row[1]) != "" {
 			pubkey := strings.TrimSpace(row[1])
-			registeredSet[pubkey] = true
+            manager := strings.TrimSpace(row[2])
+			registeredMap[pubkey] = manager
 		}
 	}
 
 	// Cache the result for 24 hours
-	if err := h.cache.Set(cacheKey, registeredSet, 24*time.Hour); err != nil {
-		logrus.Warn("Failed to cache registered pNodes set:", err)
+	if err := h.cache.Set(cacheKey, registeredMap, 24*time.Hour); err != nil {
+		logrus.Warn("Failed to cache registered pNodes map:", err)
 	}
 
-	return registeredSet, nil
+	return registeredMap, nil
 }
 
 // readCSVFile reads a CSV file and returns the rows as slices of strings
@@ -1717,7 +1955,7 @@ func (h *Handler) GetIntelligentNetworkSummary(c *gin.Context) {
 	})
 }
 
-// IntelligentNodeComparison handles the AI-powered comparison of two nodes
+// IntelligentNodeComparison handles the AI-powered comparison of multiple nodes
 func (h *Handler) IntelligentNodeComparison(c *gin.Context) {
 	if h.geminiClient == nil {
 		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
@@ -1726,10 +1964,7 @@ func (h *Handler) IntelligentNodeComparison(c *gin.Context) {
 		return
 	}
 
-	var requestBody struct {
-		Node1 *models.PNode `json:"node1"`
-		Node2 *models.PNode `json:"node2"`
-	}
+	var requestBody models.CompareFleetRequest
 
 	if err := c.ShouldBindJSON(&requestBody); err != nil {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
@@ -1738,18 +1973,18 @@ func (h *Handler) IntelligentNodeComparison(c *gin.Context) {
 		return
 	}
 
-	if requestBody.Node1 == nil || requestBody.Node2 == nil {
+	if len(requestBody.Nodes) < 2 {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
-			Error: "Request body must contain two nodes: 'node1' and 'node2'",
+			Error: "Request body must contain at least two nodes in the 'nodes' array",
 		})
 		return
 	}
 
 	// Generate comparison with Gemini
-	comparison, err := h.geminiClient.GenerateNodeComparison(requestBody.Node1, requestBody.Node2)
+	comparison, err := h.geminiClient.GenerateFleetComparison(requestBody.Nodes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
-			Error: fmt.Sprintf("Failed to generate AI comparison: %v", err),
+			Error: fmt.Sprintf("Failed to generate AI fleet comparison: %v", err),
 		})
 		return
 	}

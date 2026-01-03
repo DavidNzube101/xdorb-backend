@@ -24,6 +24,7 @@ type PNode struct {
 	RiskScore       float64   `json:"riskScore"`
 	XDNScore        float64   `json:"xdnScore"` // Xandeum Node Score
 	Registered      bool      `json:"registered"`
+	Manager         string    `json:"manager"`
 	// New fields from rich API
 	IsPublic            bool    `json:"isPublic"`
 	RpcPort             int     `json:"rpcPort"`
@@ -137,6 +138,10 @@ type StorageStats struct {
 	GrowthRate    float64 `json:"growthRate"`
 }
 
+type CompareFleetRequest struct {
+	Nodes []PNode `json:"nodes"`
+}
+
 // APIResponse represents a standard API response
 type APIResponse struct {
 	Data       interface{} `json:"data,omitempty"`
@@ -170,4 +175,24 @@ type PriceData struct {
 		Eth  float64 `json:"eth"`
 		Btc  float64 `json:"btc"`
 	} `json:"xand"`
+}
+
+// Operator represents a pNode operator/manager
+type Operator struct {
+	Manager    string   `json:"manager"`
+	Owned      int      `json:"owned"`
+	Registered int      `json:"registered"`
+	PNodes     []string `json:"pnodes"`
+}
+
+type WhatsNew struct {
+	ID       string          `json:"id"`
+	Version  string          `json:"version"`
+	Updates  []FeatureUpdate `json:"updates"`
+}
+
+type FeatureUpdate struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"` // lucide icon name or emoji
 }

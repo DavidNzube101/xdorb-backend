@@ -3,10 +3,12 @@ package main
 import (
 	"log"
 	"os"
+    "time"
 	"xdorb-backend/internal/api"
 	"xdorb-backend/internal/bot"
 	"xdorb-backend/internal/config"
 	"xdorb-backend/internal/geolocation"
+    "xdorb-backend/internal/websocket"
 	"xdorb-backend/pkg/middleware"
 
 	"github.com/gin-gonic/gin"
@@ -53,11 +55,34 @@ func main() {
 	// Add CORS middleware
 	r.Use(middleware.CORS())
 
+    // Initialize WebSocket Hub
+    hub := websocket.NewHub()
+    go hub.Run()
+
 	// Initialize API handlers
-	apiHandler := api.NewHandler(cfg)
+	apiHandler := api.NewHandler(cfg, hub)
 
 	// Setup routes
 	api.SetupRoutes(r, apiHandler)
+
+    // Start background broadcast ticker
+    go func() {
+        ticker := time.NewTicker(5 * time.Second) // Check for updates every 5 seconds
+        defer ticker.Stop()
+        for range ticker.C {
+            // Only broadcast if there are connected clients
+            // This is a bit of a hack since Hub doesn't expose client count directly easily without mu
+            // But we can just try to fetch and broadcast anyway, or add a method to Hub.
+            
+            // For now, let's just use the RefreshCache-like logic to keep data hot
+            // and broadcast if successful.
+            
+            // We need a way to call getGlobalPNodes. Since it's a private method of Handler,
+            // we might want to expose a public method for this.
+            apiHandler.BroadcastPNodesUpdate()
+            apiHandler.BroadcastStatsUpdate()
+        }
+    }()
 
 	// Initialize and start Telegram bot if token is configured
 	if cfg.TelegramBotToken != "" {
