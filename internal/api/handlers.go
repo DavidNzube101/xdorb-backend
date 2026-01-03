@@ -277,7 +277,7 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 	}
 
 	// Fetch Pod Credits
-	creditsMap, _ := h.getCreditsMap()
+	mainnetCredits, devnetCredits, _ := h.getCreditsMaps()
 
 	// Fetch latest snapshot for CPU/RAM enrichment (Best effort)
 	var cpuMap map[string]float64
@@ -308,12 +308,24 @@ func (h *Handler) getGlobalPNodes() ([]models.PNode, error) {
 			pnodes[i].Registered = false
 		}
 
-		// Credits Enrichment
-		if creditsMap != nil {
-			if val, ok := creditsMap[pnodes[i].ID]; ok {
-				pnodes[i].Credits = val
+		// Credits Enrichment and Network Flags
+        // Reset flags first
+        pnodes[i].IsDevnet = false
+        pnodes[i].IsMainnet = false
+        pnodes[i].Credits = 0
+
+		if devnetCredits != nil {
+			if val, ok := devnetCredits[pnodes[i].ID]; ok {
+				pnodes[i].Credits += val // Aggregate for total display? Or handle per-network view?
+                pnodes[i].IsDevnet = true
 			}
 		}
+        if mainnetCredits != nil {
+            if val, ok := mainnetCredits[pnodes[i].ID]; ok {
+                pnodes[i].Credits += val
+                pnodes[i].IsMainnet = true
+            }
+        }
 
 		// Stats Enrichment (if snapshot available)
 		if cpuMap != nil {
@@ -370,6 +382,7 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 	// Parse query parameters
 	status := c.Query("status")
 	region := c.Query("region")
+    network := c.Query("network") // new
 	search := strings.ToLower(c.Query("search"))
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
@@ -402,6 +415,13 @@ func (h *Handler) GetPNodes(c *gin.Context) {
 		if region != "" && region != "all" && node.Region != region {
 			continue	
 		}
+        // Network filter
+        if network == "devnet" && !node.IsDevnet {
+            continue
+        }
+        if network == "mainnet" && !node.IsMainnet {
+            continue
+        }
 		// Search filter (name or location)
 		if search != "" {
 			if !strings.Contains(strings.ToLower(node.Name), search) &&
@@ -701,8 +721,9 @@ func (h *Handler) GetPNodeAlerts(c *gin.Context) {
 // GetLeaderboard returns top performing pNodes ranked by XDN Score
 func (h *Handler) GetLeaderboard(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+    network := c.Query("network")
 
-	cacheKey := "leaderboard:xdn:" + strconv.Itoa(limit)
+	cacheKey := "leaderboard:xdn:" + strconv.Itoa(limit) + ":" + network
 
 	// Try cache first
 	if cached, err := h.cache.Get(cacheKey); err == nil {
@@ -723,18 +744,32 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 		return
 	}
 
+    // Filter by network
+    var filtered []models.PNode
+    if network != "" {
+        for _, n := range allNodes {
+            if network == "devnet" && n.IsDevnet {
+                filtered = append(filtered, n)
+            } else if network == "mainnet" && n.IsMainnet {
+                filtered = append(filtered, n)
+            }
+        }
+    } else {
+        filtered = allNodes
+    }
+
 	// Create a copy to avoid mutating the cached array
-	nodesCopy := make([]models.PNode, len(allNodes))
-	copy(nodesCopy, allNodes)
-	allNodes = nodesCopy
+	nodesCopy := make([]models.PNode, len(filtered))
+	copy(nodesCopy, filtered)
+	filtered = nodesCopy
 
 	// Calculate XDN scores and sort
 	// XDN Score = (stake * 0.4) + (uptime * 0.3) + ((100 - latency) * 0.2) + ((100 - riskScore) * 0.1)
-	for i := range allNodes {
-		stake := allNodes[i].Stake
-		uptime := allNodes[i].Uptime
-		latency := allNodes[i].Latency
-		riskScore := allNodes[i].RiskScore
+	for i := range filtered {
+		stake := filtered[i].Stake
+		uptime := filtered[i].Uptime
+		latency := filtered[i].Latency
+		riskScore := filtered[i].RiskScore
 
 		uptimePercent := uptime / 86400 * 100
 		if uptimePercent > 100 {
@@ -751,27 +786,27 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 			riskScoreNormalized = 0
 		}
 
-		allNodes[i].XDNScore = (stake * 0.4) + (uptimePercent * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
+		filtered[i].XDNScore = (stake * 0.4) + (uptimePercent * 0.3) + (latencyScore * 0.2) + (riskScoreNormalized * 0.1)
 	}
 
 	// Sort by XDN Score (descending), then by stake (descending) as secondary sort
-	for i := 0; i < len(allNodes)-1; i++ {
-		for j := i + 1; j < len(allNodes); j++ {
+	for i := 0; i < len(filtered)-1; i++ {
+		for j := i + 1; j < len(filtered); j++ {
 			swap := false
-			if allNodes[i].XDNScore < allNodes[j].XDNScore {
+			if filtered[i].XDNScore < filtered[j].XDNScore {
 				swap = true
-			} else if allNodes[i].XDNScore == allNodes[j].XDNScore && allNodes[i].Stake < allNodes[j].Stake {
+			} else if filtered[i].XDNScore == filtered[j].XDNScore && filtered[i].Stake < filtered[j].Stake {
 				swap = true
 			}
 
 			if swap {
-				allNodes[i], allNodes[j] = allNodes[j], allNodes[i]
+				filtered[i], filtered[j] = filtered[j], filtered[i]
 			}
 		}
 	}
 
 	// Take top N nodes
-	leaderboard := allNodes
+	leaderboard := filtered
 	if len(leaderboard) > limit {
 		leaderboard = leaderboard[:limit]
 	}
@@ -2045,28 +2080,37 @@ func (h *Handler) GetRegistrationInfo(c *gin.Context) {
 	        })
 	}
 	
-	// getCreditsMap fetches pod credits from external API (Mainnet & Devnet)
-	func (h *Handler) getCreditsMap() (map[string]float64, error) {
-		cacheKey := "pod_credits_map"
-		
-		// Try cache
-		if cached, err := h.cache.Get(cacheKey); err == nil {
-			var credits map[string]float64
-			if err := cached.Unmarshal(&credits); err == nil {
-				return credits, nil
-			}
+	// getCreditsMap fetches pod credits from external API (Mainnet & Devnet) and returns separate maps
+	func (h *Handler) getCreditsMaps() (map[string]float64, map[string]float64, error) {
+		cacheKeyMainnet := "pod_credits_map_mainnet"
+		cacheKeyDevnet := "pod_credits_map_devnet"
+	
+		var mainnetCredits, devnetCredits map[string]float64
+	
+		// Try cache first
+		if cachedMain, err := h.cache.Get(cacheKeyMainnet); err == nil {
+			cachedMain.Unmarshal(&mainnetCredits)
+		}
+		if cachedDev, err := h.cache.Get(cacheKeyDevnet); err == nil {
+			cachedDev.Unmarshal(&devnetCredits)
 		}
 	
-		creditsMap := make(map[string]float64)
-		urls := []string{
-			"https://podcredits.xandeum.network/api/pods-credits",        // Mainnet
-			"https://podcredits.xandeum.network/api/devnet-pod-credits", // Devnet
+		if mainnetCredits != nil && devnetCredits != nil {
+			return mainnetCredits, devnetCredits, nil
 		}
 	
-		for _, url := range urls {
+		mainnetCredits = make(map[string]float64)
+		devnetCredits = make(map[string]float64)
+	
+		urls := map[string]string{
+			"mainnet": "https://podcredits.xandeum.network/api/mainnet-pod-credits",
+			"devnet":  "https://podcredits.xandeum.network/api/pods-credits", // Assuming pods-credits is devnet based on your earlier prompt
+		}
+	
+		for netType, url := range urls {
 			resp, err := http.Get(url)
 			if err != nil {
-				logrus.Warnf("Failed to fetch credits from %s: %v", url, err)
+				logrus.Warnf("Failed to fetch %s credits from %s: %v", netType, url, err)
 				continue
 			}
 			defer resp.Body.Close()
@@ -2078,16 +2122,25 @@ func (h *Handler) GetRegistrationInfo(c *gin.Context) {
 				} `json:"pods_credits"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&creds); err != nil {
-				logrus.Warnf("Failed to decode credits from %s: %v", url, err)
+				logrus.Warnf("Failed to decode %s credits: %v", netType, err)
 				continue
 			}
 	
+			targetMap := mainnetCredits
+			if netType == "devnet" {
+				targetMap = devnetCredits
+			}
+	
 			for _, pc := range creds.PodsCredits {
-				creditsMap[pc.PodID] = pc.Credits
+	            // Normalize ID for consistent matching
+	            id := strings.TrimSpace(pc.PodID)
+				targetMap[id] = pc.Credits
 			}
 		}
 	
 		// Cache for 10 minutes
-		h.cache.Set(cacheKey, creditsMap, 10*time.Minute)
-		return creditsMap, nil
+		h.cache.Set(cacheKeyMainnet, mainnetCredits, 10*time.Minute)
+		h.cache.Set(cacheKeyDevnet, devnetCredits, 10*time.Minute)
+	
+		return mainnetCredits, devnetCredits, nil
 	}

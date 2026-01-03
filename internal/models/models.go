@@ -25,6 +25,8 @@ type PNode struct {
 	XDNScore        float64   `json:"xdnScore"` // Xandeum Node Score
 	Registered      bool      `json:"registered"`
 	Manager         string    `json:"manager"`
+    IsDevnet        bool      `json:"isDevnet"`
+    IsMainnet       bool      `json:"isMainnet"`
 	// New fields from rich API
 	IsPublic            bool    `json:"isPublic"`
 	RpcPort             int     `json:"rpcPort"`
