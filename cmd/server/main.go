@@ -7,6 +7,9 @@ import (
 	"xdorb-backend/internal/api"
 	"xdorb-backend/internal/bot"
 	"xdorb-backend/internal/config"
+    "xdorb-backend/internal"
+    "xdorb-backend/internal/prpc"
+    "xdorb-backend/internal/updates"
 	"xdorb-backend/internal/geolocation"
     "xdorb-backend/internal/websocket"
 	"xdorb-backend/pkg/middleware"
@@ -59,26 +62,28 @@ func main() {
     hub := websocket.NewHub()
     go hub.Run()
 
+    // Initialize services for background jobs (Email Updates)
+    fbService, err := internal.NewFirebaseService(cfg)
+    if err != nil {
+        log.Printf("Warning: Failed to init Firebase for update service: %v", err)
+    }
+    prpcClient := prpc.NewClient(cfg)
+    
+    // Start Update Service
+    updateService := updates.NewService(cfg, fbService, prpcClient)
+    updateService.Start()
+
 	// Initialize API handlers
-	apiHandler := api.NewHandler(cfg, hub)
+	apiHandler := api.NewHandler(cfg, hub, updateService)
 
 	// Setup routes
 	api.SetupRoutes(r, apiHandler)
 
     // Start background broadcast ticker
     go func() {
-        ticker := time.NewTicker(5 * time.Second) // Check for updates every 5 seconds
+        ticker := time.NewTicker(5 * time.Second)
         defer ticker.Stop()
         for range ticker.C {
-            // Only broadcast if there are connected clients
-            // This is a bit of a hack since Hub doesn't expose client count directly easily without mu
-            // But we can just try to fetch and broadcast anyway, or add a method to Hub.
-            
-            // For now, let's just use the RefreshCache-like logic to keep data hot
-            // and broadcast if successful.
-            
-            // We need a way to call getGlobalPNodes. Since it's a private method of Handler,
-            // we might want to expose a public method for this.
             apiHandler.BroadcastPNodesUpdate()
             apiHandler.BroadcastStatsUpdate()
         }

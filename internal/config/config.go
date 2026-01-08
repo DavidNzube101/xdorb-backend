@@ -38,6 +38,10 @@ type Config struct {
 	FirebasePrivateKey  string
 	FirebaseClientEmail string
 
+    // Email Service
+    UpdateServiceEmail            string
+    UpdateServiceEmailAppPassword string
+
 	// Cache TTLs
 	PNodeCacheTTL   time.Duration
 	StatsCacheTTL   time.Duration
@@ -94,6 +98,9 @@ func Load() *Config {
 		FirebaseProjectID:   getEnv("FIREBASE_PROJECT_ID", ""),
 		FirebasePrivateKey:  getEnv("FIREBASE_PRIVATE_KEY", ""),
 		FirebaseClientEmail: getEnv("FIREBASE_CLIENT_EMAIL", ""),
+
+        UpdateServiceEmail:            getEnv("UPDATE_SERVICE_EMAIL", ""),
+        UpdateServiceEmailAppPassword: getEnv("UPDATE_SERVICE_EMAIL_APP_PASSWORD", ""),
 
 		PNodeCacheTTL:   getEnvAsDuration("PNODE_CACHE_TTL", 2*time.Minute),
 		StatsCacheTTL:   getEnvAsDuration("STATS_CACHE_TTL", 5*time.Minute),

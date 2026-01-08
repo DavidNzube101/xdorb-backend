@@ -198,3 +198,20 @@ type FeatureUpdate struct {
 	Description string `json:"description"`
 	Icon        string `json:"icon"` // lucide icon name or emoji
 }
+
+// EmailSubscriber represents a user subscribed to email updates for a specific node
+type EmailSubscriber struct {
+	Email     string    `json:"email" firestore:"email"`
+	PNodeID   string    `json:"pNodeId" firestore:"pNodeId"`
+	Frequency string    `json:"frequency" firestore:"frequency"` // "daily" or "twice_daily"
+	CreatedAt time.Time `json:"createdAt" firestore:"createdAt"`
+}
+
+// APIKey represents a developer API key
+type APIKey struct {
+	WalletAddress string    `json:"walletAddress" firestore:"walletAddress"`
+	HashedKey     string    `json:"hashedKey" firestore:"hashedKey"`
+	CreatedAt     time.Time `json:"createdAt" firestore:"createdAt"`
+	LastUsedAt    time.Time `json:"lastUsedAt" firestore:"lastUsedAt"`
+    IsActive      bool      `json:"isActive" firestore:"isActive"`
+}

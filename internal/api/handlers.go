@@ -20,6 +20,7 @@ import (
 	"xdorb-backend/internal/gemini"
 	"xdorb-backend/internal/models"
 	"xdorb-backend/internal/prpc"
+    "xdorb-backend/internal/updates"
     "xdorb-backend/internal/websocket"
 	"xdorb-backend/pkg/middleware"
 
@@ -36,10 +37,11 @@ type Handler struct {
 	firebase     *internal.FirebaseService
 	geminiClient *gemini.Client
     hub          *websocket.Hub
+    updateService *updates.Service
 }
 
 // NewHandler creates a new handler instance
-func NewHandler(cfg *config.Config, hub *websocket.Hub) *Handler {
+func NewHandler(cfg *config.Config, hub *websocket.Hub, updateService *updates.Service) *Handler {
 	firebase, _ := internal.NewFirebaseService(cfg) // Ignore error for now
 
 	geminiClient, err := gemini.NewClient(cfg.GeminiAPIKey)
@@ -48,12 +50,13 @@ func NewHandler(cfg *config.Config, hub *websocket.Hub) *Handler {
 	}
 
 	return &Handler{
-		config:       cfg,
-		prpc:         prpc.NewClient(cfg),
-		cache:        cache.NewCache(cfg),
-		firebase:     firebase,
-		geminiClient: geminiClient,
-        hub:          hub,
+		config:        cfg,
+		prpc:          prpc.NewClient(cfg),
+		cache:         cache.NewCache(cfg),
+		firebase:      firebase,
+		geminiClient:  geminiClient,
+        hub:           hub,
+        updateService: updateService,
 	}
 }
 
@@ -66,11 +69,42 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 	r.GET("/api/jupiter/quote", h.GetQuote)
     r.GET("/ws", h.HandleWebSocket)
 
+    // Developer API generation (Public)
+    r.POST("/api/developer/connect", h.GenerateAPIKey)
+
+    // V1 Free API Routes
+    v1Free := r.Group("/v1")
+    v1Free.Use(middleware.RateLimit(h.config.RateLimitRPM))
+    {
+        v1Free.GET("/get-all-pnodes", h.GetV1PNodes)
+        v1Free.GET("/pnode/:id", h.GetV1PNodeByID)
+    }
+
+    // V1 Gated API Routes
+    v1Gated := r.Group("/v1")
+    v1Gated.Use(h.DeveloperAuth())
+    v1Gated.Use(middleware.RateLimit(h.config.RateLimitRPM))
+    {
+        // Include free routes in gated as well if requested, but usually separate is fine.
+        // The user said "the api gated would be: everything in free + ..."
+        // So we can just point to the same handlers or rely on the user having access to both if they have a key.
+        // For simplicity, let's just add the specific gated ones here.
+        v1Gated.GET("/analytics", h.GetV1Analytics)
+        v1Gated.GET("/network", h.GetV1Network)
+        v1Gated.GET("/network/:region", h.GetV1Region)
+        v1Gated.GET("/leaderboard", h.GetV1Leaderboard)
+        v1Gated.GET("/leaderboard/:season", h.GetV1LeaderboardSeason)
+    }
+
 	// API v1 routes with authentication
 	v1 := r.Group("/api")
 	v1.Use(middleware.APIKeyAuth(h.config.ValidAPIKeys))
 	v1.Use(middleware.RateLimit(h.config.RateLimitRPM))
 	{
+        // Email Subscription
+        v1.POST("/pnodes/:id/subscribe", h.SubscribeToNode)
+        v1.POST("/pnodes/:id/test-email", h.TestEmail)
+
 		// Dashboard
 		v1.GET("/dashboard/stats", h.GetDashboardStats)
 

@@ -282,6 +282,85 @@ func (fs *FirebaseService) GetLatestNetworkSnapshot(ctx context.Context) (*model
 	return &snapshot, nil
 }
 
+func (fs *FirebaseService) SaveEmailSubscriber(ctx context.Context, sub *models.EmailSubscriber) error {
+	if fs == nil || fs.client == nil {
+		return nil
+	}
+	// Use composite ID: email_pnodeID to allow multiple subscriptions
+	id := sub.Email + "_" + sub.PNodeID
+	_, err := fs.client.Collection("email_subscribers").Doc(id).Set(ctx, sub)
+	return err
+}
+
+func (fs *FirebaseService) GetEmailSubscribers(ctx context.Context) ([]models.EmailSubscriber, error) {
+	if fs == nil || fs.client == nil {
+		return []models.EmailSubscriber{}, nil
+	}
+	docs, err := fs.client.Collection("email_subscribers").Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+	var subs []models.EmailSubscriber
+	for _, doc := range docs {
+		var sub models.EmailSubscriber
+		if err := doc.DataTo(&sub); err != nil {
+			continue
+		}
+		subs = append(subs, sub)
+	}
+	return subs, nil
+}
+
+func (fs *FirebaseService) SaveAPIKey(ctx context.Context, apiKey *models.APIKey) error {
+	if fs == nil || fs.client == nil {
+		return nil
+	}
+	// Use wallet address as ID for easy lookup/update
+	_, err := fs.client.Collection("api_keys").Doc(apiKey.WalletAddress).Set(ctx, apiKey)
+	return err
+}
+
+func (fs *FirebaseService) GetAPIKeyByWallet(ctx context.Context, wallet string) (*models.APIKey, error) {
+	if fs == nil || fs.client == nil {
+		return nil, nil
+	}
+	doc, err := fs.client.Collection("api_keys").Doc(wallet).Get(ctx)
+	if err != nil {
+		// Return nil if not found
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var apiKey models.APIKey
+	if err := doc.DataTo(&apiKey); err != nil {
+		return nil, err
+	}
+	return &apiKey, nil
+}
+
+func (fs *FirebaseService) GetAPIKeyByHash(ctx context.Context, hashedKey string) (*models.APIKey, error) {
+	if fs == nil || fs.client == nil {
+		return nil, nil
+	}
+	// Query by hashedKey
+	iter := fs.client.Collection("api_keys").Where("hashedKey", "==", hashedKey).Documents(ctx)
+	docs, err := iter.GetAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(docs) == 0 {
+		return nil, nil // Not found
+	}
+	
+	// Should be unique, return the first one
+	var apiKey models.APIKey
+	if err := docs[0].DataTo(&apiKey); err != nil {
+		return nil, err
+	}
+	return &apiKey, nil
+}
+
 func (fs *FirebaseService) Close() error {
 	if fs.client != nil {
 		return fs.client.Close()
