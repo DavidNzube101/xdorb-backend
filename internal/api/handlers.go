@@ -1287,34 +1287,44 @@ func (h *Handler) GetPrices(c *gin.Context) {
 // GetWhatsNew returns the latest features and updates
 func (h *Handler) GetWhatsNew(c *gin.Context) {
     updates := models.WhatsNew{
-        ID:      "jan-2026-update-v1",
-        Version: "1.1.0",
+        ID:      "jan-2026-update-v2",
+        Version: "1.2.0",
         Updates: []models.FeatureUpdate{
             {
-                Title:       "Real-time WebSocket Data",
-                Description: "Experience instant network updates without page refreshes. pNodes and dashboard stats now stream live.",
-                Icon:        "zap",
+                Title:       "Developer APIs & Docs",
+                Description: "Build on top of Xandeum Network data with our new public and gated APIs. Generate secure keys and access comprehensive documentation.",
+                Icon:        "code",
             },
             {
-                Title:       "Network Operators & Fleet Management",
-                Description: "Analyze managers and their pNode fleets. New paginated directory with detailed pNode modals.",
-                Icon:        "users",
+                Title:       "Email Alerts & Subscriptions",
+                Description: "Never miss a beat. Subscribe to daily or twice-daily email performance reports for your favorite pNodes.",
+                Icon:        "bell",
             },
-            {
-                Title:       "Interactive STOINC Calculator",
-                Description: "Project your potential earnings with our new 4-step carousel calculator. Export results to styled PDF.",
-                Icon:        "calculator",
-            },
-            {
-                Title:       "Multi-Node Fleet Comparison",
-                Description: "Compare up to 10 nodes side-by-side with AI-powered performance analysis.",
-                Icon:        "bar-chart",
-            },
-            {
-                Title:       "Dynamic Regional Inspection",
-                Description: "Deep dive into specific geographical sectors with focused heatmaps and AI-generated regional summaries.",
-                Icon:        "globe",
-            },
+            // {
+            //     Title:       "Real-time WebSocket Data",
+            //     Description: "Experience instant network updates without page refreshes. pNodes and dashboard stats now stream live.",
+            //     Icon:        "zap",
+            // },
+            // {
+            //     Title:       "Network Operators & Fleet Management",
+            //     Description: "Analyze managers and their pNode fleets. New paginated directory with detailed pNode modals.",
+            //     Icon:        "users",
+            // },
+            // {
+            //     Title:       "Interactive STOINC Calculator",
+            //     Description: "Project your potential earnings with our new 4-step carousel calculator. Export results to styled PDF.",
+            //     Icon:        "calculator",
+            // },
+            // {
+            //     Title:       "Multi-Node Fleet Comparison",
+            //     Description: "Compare up to 10 nodes side-by-side with AI-powered performance analysis.",
+            //     Icon:        "bar-chart",
+            // },
+            // {
+            //     Title:       "Dynamic Regional Inspection",
+            //     Description: "Deep dive into specific geographical sectors with focused heatmaps and AI-generated regional summaries.",
+            //     Icon:        "globe",
+            // },
         },
     }
 
