@@ -2,9 +2,13 @@ package updates
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
-    "os"
-    "strconv"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"xdorb-backend/internal"
@@ -186,6 +190,25 @@ func (s *Service) generateEmailBody(name string, pnode *models.PNode, rank int) 
         uptimeStr = fmt.Sprintf("%dh", hours)
     }
 
+    // Format memory
+    memUsedGB := float64(pnode.MemoryUsed) / (1024 * 1024 * 1024)
+    memTotalGB := float64(pnode.MemoryTotal) / (1024 * 1024 * 1024)
+    memStr := fmt.Sprintf("%.2f / %.2f GB", memUsedGB, memTotalGB)
+    if pnode.MemoryTotal == 0 {
+        memStr = "-"
+    }
+
+    networkTag := ""
+    if pnode.IsMainnet {
+        networkTag += `<span style="background-color: rgba(168, 85, 247, 0.1); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.2); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 4px;">Mainnet</span>`
+    }
+    if pnode.IsDevnet {
+        networkTag += `<span style="background-color: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 4px;">Devnet</span>`
+    }
+    if pnode.Registered {
+        networkTag += `<span style="background-color: rgba(34, 197, 94, 0.1); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.2); padding: 2px 6px; border-radius: 4px; font-size: 10px;">Registered</span>`
+    }
+
     return fmt.Sprintf(`
 <!DOCTYPE html>
 <html>
@@ -228,13 +251,36 @@ func (s *Service) generateEmailBody(name string, pnode *models.PNode, rank int) 
                                     <span style="color: #a8a29e; font-size: 14px;">Latency</span>
                                     <span style="color: #ffffff; font-weight: 500; font-size: 14px;">%d ms</span>
                                 </div>
-                                 <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
                                     <span style="color: #a8a29e; font-size: 14px;">Credits</span>
                                     <span style="color: #fbbf24; font-weight: 600; font-size: 14px;">%.0f</span>
                                 </div>
-                                <div style="display: flex; justify-content: space-between;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
                                     <span style="color: #a8a29e; font-size: 14px;">Rank</span>
                                     <span style="color: #ffffff; font-weight: 600; font-size: 14px;">#%d</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                                    <span style="color: #a8a29e; font-size: 14px;">CPU Usage</span>
+                                    <span style="color: #ffffff; font-weight: 500; font-size: 14px;">%.1f%%</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                                    <span style="color: #a8a29e; font-size: 14px;">Memory</span>
+                                    <span style="color: #ffffff; font-weight: 500; font-size: 14px;">%s</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                                    <span style="color: #a8a29e; font-size: 14px;">Packets (In/Out)</span>
+                                    <span style="color: #ffffff; font-weight: 500; font-size: 14px;">%d / %d</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                                    <span style="color: #a8a29e; font-size: 14px;">Location</span>
+                                    <span style="color: #ffffff; font-weight: 500; font-size: 14px;">%s</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="color: #a8a29e; font-size: 14px;">Version</span>
+                                    <div style="text-align: right;">
+                                        <span style="color: #ffffff; font-weight: 500; font-size: 14px; font-family: monospace; display: block; margin-bottom: 4px;">%s</span>
+                                        %s
+                                    </div>
                                 </div>
                             </div>
                             
@@ -262,7 +308,7 @@ func (s *Service) generateEmailBody(name string, pnode *models.PNode, rank int) 
     </table>
 </body>
 </html>
-`, name, pnode.XDNScore, uptimeStr, pnode.Latency, pnode.Credits, rank, pnode.ID)
+`, name, pnode.XDNScore, uptimeStr, pnode.Latency, pnode.Credits, rank, pnode.CPUPercent, memStr, pnode.PacketsIn, pnode.PacketsOut, pnode.Location, pnode.Version, networkTag, pnode.ID)
 }
 
 func (s *Service) sendEmail(to, subject, body string) error {
@@ -294,6 +340,103 @@ func (s *Service) sendEmail(to, subject, body string) error {
     
     logrus.Info("Email sent successfully")
     return nil
+}
+
+func (s *Service) enrichPNode(pnode *models.PNode, registeredMap map[string]string, mainnetCredits, devnetCredits map[string]float64) {
+    // Registration
+    if manager, ok := registeredMap[pnode.ID]; ok {
+        pnode.Registered = true
+        pnode.Manager = manager
+    }
+
+    // Credits & Network
+    pnode.IsDevnet = false
+    pnode.IsMainnet = false
+    pnode.Credits = 0
+
+    if devnetCredits != nil {
+        if val, ok := devnetCredits[pnode.ID]; ok {
+            pnode.Credits += val
+            pnode.IsDevnet = true
+        }
+    }
+    if mainnetCredits != nil {
+        if val, ok := mainnetCredits[pnode.ID]; ok {
+            pnode.Credits += val
+            pnode.IsMainnet = true
+        }
+    }
+}
+
+// Helper methods to fetch credits and registration data
+func (s *Service) getCreditsMaps() (map[string]float64, map[string]float64, error) {
+    mainnetCredits := make(map[string]float64)
+    devnetCredits := make(map[string]float64)
+
+    urls := map[string]string{
+        "mainnet": "https://podcredits.xandeum.network/api/mainnet-pod-credits",
+        "devnet":  "https://podcredits.xandeum.network/api/pods-credits", 
+    }
+
+    for netType, url := range urls {
+        resp, err := http.Get(url)
+        if err != nil {
+            logrus.Warnf("Failed to fetch %s credits from %s: %v", netType, url, err)
+            continue
+        }
+        defer resp.Body.Close()
+
+        var creds struct {
+            PodsCredits []struct {
+                Credits float64 `json:"credits"`
+                PodID   string  `json:"pod_id"`
+            } `json:"pods_credits"`
+        }
+        if err := json.NewDecoder(resp.Body).Decode(&creds); err != nil {
+            logrus.Warnf("Failed to decode %s credits: %v", netType, err)
+            continue
+        }
+
+        targetMap := mainnetCredits
+        if netType == "devnet" {
+            targetMap = devnetCredits
+        }
+
+        for _, pc := range creds.PodsCredits {
+            id := strings.TrimSpace(pc.PodID)
+            targetMap[id] = pc.Credits
+        }
+    }
+
+    return mainnetCredits, devnetCredits, nil
+}
+
+func (s *Service) getRegisteredPNodesSet() (map[string]string, error) {
+    // Read the CSV file
+    file, err := os.Open("pnodes-data-2025-12-11.csv")
+    if err != nil {
+        return nil, fmt.Errorf("failed to read CSV file: %w", err)
+    }
+    defer file.Close()
+
+    reader := csv.NewReader(file)
+    rows, err := reader.ReadAll()
+    if err != nil {
+        return nil, err
+    }
+
+    registeredMap := make(map[string]string)
+    // Index, pNode Identity Pubkey (1), Manager (2), Registered Time (3), Version (4)
+    for i, row := range rows {
+        if i == 0 { continue } // Skip header
+        if len(row) > 2 && strings.TrimSpace(row[1]) != "" {
+            pubkey := strings.TrimSpace(row[1])
+            manager := strings.TrimSpace(row[2])
+            registeredMap[pubkey] = manager
+        }
+    }
+
+    return registeredMap, nil
 }
 
 func getEnv(key, defaultValue string) string {
