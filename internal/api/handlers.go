@@ -57,6 +57,7 @@ func NewHandler(cfg *config.Config, hub *websocket.Hub, updateService *updates.S
 		cache:         cache.NewCache(cfg),
 		firebase:      firebase,
 		geminiClient:  geminiClient,
+        heliusClient:  helius.NewClient(cfg),
         hub:           hub,
         updateService: updateService,
 	}
