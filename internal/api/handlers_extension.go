@@ -185,6 +185,66 @@ func (h *Handler) GetV1Leaderboard(c *gin.Context) {
 }
 
 func (h *Handler) GetV1LeaderboardSeason(c *gin.Context) {
-    // TODO: Implement season logic. For now, just return standard leaderboard.
+    
     h.GetLeaderboard(c)
+}
+
+// GetPNodeNFTs fetches NFTs associated with the pNode's manager wallet
+func (h *Handler) GetPNodeNFTs(c *gin.Context) {
+    id := c.Param("id")
+    if id == "" {
+        c.JSON(http.StatusBadRequest, models.APIResponse{Error: "pNode ID is required"})
+        return
+    }
+
+    
+    
+    registeredMap, err := h.getRegisteredPNodesSet()
+    walletAddress := id // Default to pNode ID (assuming it might be the wallet)
+    
+    if err == nil {
+        if manager, ok := registeredMap[id]; ok && manager != "" {
+            walletAddress = manager
+        }
+    }
+
+    
+    assets, err := h.heliusClient.GetAssetsByOwner(walletAddress)
+    if err != nil {
+        logrus.Errorf("Failed to fetch assets for %s: %v", walletAddress, err)
+        c.JSON(http.StatusInternalServerError, models.APIResponse{Error: "Failed to fetch wallet assets"})
+        return
+    }
+
+    var nfts []map[string]string
+    for _, asset := range assets {
+        
+        if asset.Interface == "V1_NFT" || asset.Interface == "ProgrammableNFT" || asset.Interface == "MplsCore" {
+             
+             name := strings.ToLower(asset.Content.Metadata.Name)
+             desc := strings.ToLower(asset.Content.Metadata.Description)
+             
+             isRelevant := strings.Contains(name, "xandeum") || 
+                           strings.Contains(desc, "xandeum") ||
+                           strings.Contains(name, "pioneer") ||
+                           strings.Contains(name, "genesis") ||
+                           strings.Contains(name, "titan") ||
+                           strings.Contains(name, "xeno")
+
+             if isRelevant {
+                 image := asset.Content.Links.Image
+                 if image == "" && len(asset.Content.Files) > 0 {
+                     image = asset.Content.Files[0].URI
+                 }
+
+                 nfts = append(nfts, map[string]string{
+                     "name": asset.Content.Metadata.Name,
+                     "image": image,
+                     "description": asset.Content.Metadata.Description,
+                 })
+             }
+        }
+    }
+
+    c.JSON(http.StatusOK, models.APIResponse{Data: nfts})
 }
