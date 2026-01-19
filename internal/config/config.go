@@ -32,6 +32,7 @@ type Config struct {
 	BackendURL            string
 	GeminiAPIKey          string
 	JupiterAPIKey         string
+	HeliusAPIKey          string
 
 	// Firebase
 	FirebaseProjectID   string
@@ -94,6 +95,7 @@ func Load() *Config {
 		BackendURL:            getEnv("BACKEND_URL", fmt.Sprintf("http://localhost:%d", getEnvAsInt("PORT", 8080))),
 		GeminiAPIKey:          getEnv("GEMINI_API_KEY", ""),
 		JupiterAPIKey:         getEnv("JUPITER_API_KEY", ""),
+		HeliusAPIKey:          getEnv("HELIUS_API_KEY", ""),
 
 		FirebaseProjectID:   getEnv("FIREBASE_PROJECT_ID", ""),
 		FirebasePrivateKey:  getEnv("FIREBASE_PRIVATE_KEY", ""),

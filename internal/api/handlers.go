@@ -18,6 +18,7 @@ import (
 	"xdorb-backend/internal/cache"
 	"xdorb-backend/internal/config"
 	"xdorb-backend/internal/gemini"
+    "xdorb-backend/internal/helius"
 	"xdorb-backend/internal/models"
 	"xdorb-backend/internal/prpc"
     "xdorb-backend/internal/updates"
@@ -36,6 +37,7 @@ type Handler struct {
 	cache        *cache.Cache
 	firebase     *internal.FirebaseService
 	geminiClient *gemini.Client
+    heliusClient *helius.Client
     hub          *websocket.Hub
     updateService *updates.Service
 }
