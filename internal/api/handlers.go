@@ -119,6 +119,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
 		v1.GET("/pnodes/:id/history", h.GetPNodeHistory)
 		v1.GET("/pnodes/:id/peers", h.GetPNodePeers)
 		v1.GET("/pnodes/:id/alerts", h.GetPNodeAlerts)
+        v1.GET("/pnodes/:id/nfts", h.GetPNodeNFTs)
 		v1.GET("/pnodes/:id/registration", h.GetRegistrationInfo)
 
 		// Leaderboard
