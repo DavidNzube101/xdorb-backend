@@ -230,7 +230,12 @@ func (h *Handler) GetPNodeNFTs(c *gin.Context) {
                            strings.Contains(name, "pioneer") ||
                            strings.Contains(name, "genesis") ||
                            strings.Contains(name, "titan") ||
-                           strings.Contains(name, "xeno")
+                           strings.Contains(name, "xeno") ||
+                           strings.Contains(name, "founders") ||
+                           strings.Contains(name, "dragon") ||
+                           strings.Contains(name, "coyote") ||
+                           strings.Contains(name, "rabbit") ||
+                           strings.Contains(name, "cricket")
 
              if isRelevant {
                  image := asset.Content.Links.Image
