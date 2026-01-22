@@ -190,6 +190,10 @@ func (h *Handler) GetV1LeaderboardSeason(c *gin.Context) {
     h.GetLeaderboard(c)
 }
 
+func (h *Handler) GetV1Operators(c *gin.Context) {
+    h.GetOperators(c)
+}
+
 // GetPNodeNFTs fetches NFTs associated with the pNode's manager wallet
 func (h *Handler) GetPNodeNFTs(c *gin.Context) {
     id := c.Param("id")
