@@ -95,6 +95,7 @@ func SetupRoutes(r *gin.Engine, h *Handler) {
         v1Gated.GET("/analytics", h.GetV1Analytics)
         v1Gated.GET("/network", h.GetV1Network)
         v1Gated.GET("/network/:region", h.GetV1Region)
+        v1Gated.GET("/network/:region/summary", h.GetRegionSummary)
         v1Gated.GET("/leaderboard", h.GetV1Leaderboard)
         v1Gated.GET("/leaderboard/:season", h.GetV1LeaderboardSeason)
         v1Gated.GET("/operators", h.GetV1Operators)
